@@ -51,3 +51,20 @@ docker compose logs backend       # logs del Guardian
 docker compose logs client        # logs del cliente RAG
 docker compose logs anythingllm   # logs de AnythingLLM
 ```
+
+**"Authentication failed against database server... credentials... not valid"** en los
+logs del motor o el backend: el volumen de la base (`elea-installer_pgdata`) quedó de una
+instalación anterior con una contraseña distinta a la que tiene el `.env` actual. Pasa si
+se borró `.env` y se corrió `./install.sh` de nuevo (genera una contraseña nueva) sin
+antes borrar los datos viejos. Arreglo — **borra todos los datos**, solo hacerlo si no
+importa perder lo que había:
+```bash
+docker compose down -v
+./install.sh
+```
+
+**El motor (`engine`) tarda en aparecer sano la primera vez**: es esperado con una base
+de datos nueva (migra sus tablas) — el instalador ya espera hasta 5 minutos. Si en algún
+momento el contenedor se reinicia solo una vez durante ese lapso (`docker compose ps`
+muestra un reinicio reciente), es normal — `restart: unless-stopped` lo recupera solo,
+no hace falta intervenir.
