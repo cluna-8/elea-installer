@@ -69,9 +69,9 @@ for i in $(seq 1 60); do
   [ "$i" -eq 60 ] && die "El motor no terminó de arrancar después de 5 minutos. Revisá: docker compose logs engine"
 done
 
-log "Levantando el Guardian (backend)"
-docker compose pull backend 2>&1 | grep -v "^ " || true
-docker compose up -d backend
+log "Levantando el Guardian (backend + panel)"
+docker compose pull backend frontend 2>&1 | grep -v "^ " || true
+docker compose up -d backend frontend
 
 log "Esperando a que el Guardian esté listo (puede tardar el primer arranque)"
 for i in $(seq 1 60); do
@@ -158,7 +158,8 @@ echo
 echo "================================================================"
 echo "  Listo. Todo corriendo."
 echo
-echo "  Panel del Guardian:  http://localhost:8091/docs"
+echo "  Panel del Guardian:  http://localhost:8090"
+echo "  API del Guardian:    http://localhost:8091/docs"
 echo "  Cliente RAG:         http://localhost:8095"
 echo
 echo "  Admin:  usuario 'admin', contraseña: ${ADMIN_PASSWORD}"

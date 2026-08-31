@@ -113,6 +113,16 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  frontend:
+    image: ghcr.io/cluna-8/elea-guardian-frontend:latest
+    container_name: elea-frontend
+    ports:
+      - "8090:5173"
+    depends_on:
+      - backend
+    networks: [elea-net]
+    restart: unless-stopped
+
   anythingllm:
     image: mintplexlabs/anythingllm:latest
     container_name: elea-anythingllm

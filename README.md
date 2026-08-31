@@ -33,7 +33,8 @@ aisladas entre sí.
 | Qué | URL |
 |---|---|
 | Cliente RAG (para probar) | http://localhost:8095 |
-| Panel del Guardian (admin) | http://localhost:8091/docs |
+| Panel del Guardian (admin, visual) | http://localhost:8090 |
+| API del Guardian (Swagger) | http://localhost:8091/docs |
 | AnythingLLM (interno, no hace falta entrar) | http://localhost:3001 |
 
 ## Apagar / prender
