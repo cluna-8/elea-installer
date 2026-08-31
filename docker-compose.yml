@@ -1,0 +1,158 @@
+version: '3.8'
+
+# Instalador Elea — Guardian + cliente RAG + AnythingLLM, todo junto.
+# Solo referencia IMÁGENES ya construidas (ghcr.io/cluna-8/...) — ningún código
+# fuente del Guardian viaja en este repo. Ver install.sh e INSTALL.md.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: elea-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-elea_gateway}
+      POSTGRES_USER: ${POSTGRES_USER:-elea_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [elea-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elea_admin} -d ${POSTGRES_DB:-elea_gateway}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: elea-redis
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [elea-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  nlp-analyzer:
+    image: ghcr.io/cluna-8/elea-guardian-nlp:latest
+    container_name: elea-nlp-analyzer
+    networks: [elea-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:3000/health\")' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  engine:
+    image: ghcr.io/cluna-8/elea-guardian-engine:latest
+    container_name: elea-engine
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-elea_admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-elea_gateway}
+      - LITELLM_MASTER_KEY=${ENGINE_MASTER_KEY:?Falta ENGINE_MASTER_KEY en .env}
+      - AZURE_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_API_BASE=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_API_VERSION=${AZURE_API_VERSION}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LITELLM_LOG=INFO
+      - NLP_ANALYZER_URL=http://nlp-analyzer:3000
+      - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
+      - SENTINEL_AUDIT_FAIL=open
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      nlp-analyzer: { condition: service_healthy }
+    networks: [elea-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:4000/health/readiness\")' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/cluna-8/elea-guardian-backend:latest
+    container_name: elea-backend
+    command: ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8091:8000"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-elea_gateway}
+      - POSTGRES_USER=${POSTGRES_USER:-elea_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SENTINEL_ENGINE_API_BASE=http://engine:4000
+      - SENTINEL_ENGINE_MASTER_KEY=${ENGINE_MASTER_KEY}
+      - AZURE_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_API_BASE=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_API_VERSION=${AZURE_API_VERSION}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FERNET_SECRET_KEY=${FERNET_SECRET_KEY:?Falta FERNET_SECRET_KEY en .env}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Falta JWT_SECRET_KEY en .env}
+      - SENTINEL_LICENSE_TOKEN_FILE=/app/config/licenses/dev-demo.lic
+      - SENTINEL_ALLOW_DEV_LICENSE=true
+      - NLP_ANALYZER_URL=http://nlp-analyzer:3000
+      - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
+      - SENTINEL_AUDIT_FAIL=open
+    depends_on:
+      db: { condition: service_healthy }
+      engine: { condition: service_healthy }
+    networks: [elea-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    restart: unless-stopped
+
+  anythingllm:
+    image: mintplexlabs/anythingllm:latest
+    container_name: elea-anythingllm
+    ports:
+      - "3001:3001"
+    environment:
+      - SERVER_PORT=3001
+      - STORAGE_DIR=/app/server/storage
+      - DISABLE_TELEMETRY=true
+    volumes:
+      - anythingllm_data:/app/server/storage
+    networks: [elea-net]
+    restart: unless-stopped
+
+  client:
+    image: ghcr.io/cluna-8/elea-rag-client:latest
+    container_name: elea-rag-client
+    ports:
+      - "8095:8095"
+    environment:
+      - PORT=8095
+      - ELEA_BACKEND_URL=http://backend:8000/api/v1
+      - ELEA_SERVICE_USERNAME=admin
+      - ELEA_SERVICE_PASSWORD=${ADMIN_PASSWORD:?Falta ADMIN_PASSWORD en .env}
+      - ANYTHINGLLM_URL=http://anythingllm:3001
+      - ANYTHINGLLM_API_KEY=${ANYTHINGLLM_API_KEY:-}
+      - MASKING_VIRTUAL_KEY=${MASKING_VIRTUAL_KEY:-}
+    volumes:
+      - client_uploads:/app/public/uploads
+    depends_on:
+      - backend
+      - anythingllm
+    networks: [elea-net]
+    restart: unless-stopped
+
+networks:
+  elea-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  anythingllm_data:
+  client_uploads:
