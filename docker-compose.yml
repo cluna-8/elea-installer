@@ -62,6 +62,13 @@ services:
       - NLP_ANALYZER_URL=http://nlp-analyzer:3000
       - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
       - SENTINEL_AUDIT_FAIL=open
+      # Bóveda de PII para RAG (opt-in, decisión de producto de Elea): sin esto, el
+      # chat NUNCA restaura el dato real en una respuesta RAG — el enmascarado ocurre
+      # en la subida del documento, un request completamente distinto (y mucho antes)
+      # del chat que lo consulta después, así que no hay nada que desenmascarar sin
+      # persistir el mapa en algún lado. Verificado en vivo (02-sep).
+      - SENTINEL_PII_VAULT_ENABLED=${SENTINEL_PII_VAULT_ENABLED:-true}
+      - SENTINEL_PII_VAULT_TTL_SECONDS=${SENTINEL_PII_VAULT_TTL_SECONDS:-7776000}
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -101,6 +108,10 @@ services:
       - NLP_ANALYZER_URL=http://nlp-analyzer:3000
       - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
       - SENTINEL_AUDIT_FAIL=open
+      # Mismo flag que `engine` (ver comentario ahí) — el backend escribe la bóveda en
+      # /gw/inspect (masking de documentos RAG); el motor la lee al desenmascarar.
+      - SENTINEL_PII_VAULT_ENABLED=${SENTINEL_PII_VAULT_ENABLED:-true}
+      - SENTINEL_PII_VAULT_TTL_SECONDS=${SENTINEL_PII_VAULT_TTL_SECONDS:-7776000}
     depends_on:
       db: { condition: service_healthy }
       engine: { condition: service_healthy }
