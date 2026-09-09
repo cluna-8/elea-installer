@@ -129,6 +129,18 @@ services:
     container_name: elea-frontend
     ports:
       - "8090:5173"
+    # Marca como CONFIG en runtime, no horneada (mismo criterio que spec 020 US2 y
+    # deploy/docker/compose.prod.yml) — `loadBranding()` (frontend/src/main.tsx) pide
+    # `/branding/brand.json` ANTES del primer render. Sin este mount, el panel cae al
+    # default de fábrica ("Sentinel Secure AI Gateway") en vez de "Eleia Guardian" — bug
+    # real encontrado el 09-sep, nunca se había cableado para este instalador.
+    # `./branding` acá adentro apunta a `/app/public/branding` porque la imagen de hoy
+    # corre `npm run dev` (puerto 5173, `frontend/Dockerfile`), que sirve `public/` tal
+    # cual. Si en algún momento se cambia a la imagen de producción (Caddy, puerto 8080,
+    # `deploy/docker/frontend.prod.Dockerfile`), este mount pasa a `/srv/branding:ro` y
+    # el puerto publicado a `8090:8080` — los dos cambian juntos, no por separado.
+    volumes:
+      - ./branding:/app/public/branding:ro
     depends_on:
       - backend
     networks: [elea-net]
