@@ -187,6 +187,9 @@ services:
       - HUB_BRAND_TAGLINE=Gobernanza IA y RAG Corporativo
       - HUB_BRAND_TENANT_LABEL=Laboratorios ELEA
       - HUB_BRAND_GOVERNANCE_LABEL=Eleia GuardIAn
+      # El default del código pasó a ser un logo neutro (guardian-logo.svg, 09-sep) —
+      # esta instalación fija el logo real de Eleia explícitamente, para no perderlo.
+      - HUB_BRAND_LOGO_URL=/eleia-logo.png
     volumes:
       - client_uploads:/app/public/uploads
     depends_on:
