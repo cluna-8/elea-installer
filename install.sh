@@ -66,7 +66,7 @@ for i in $(seq 1 60); do
   status=$(docker inspect elea-engine --format '{{.State.Health.Status}}' 2>/dev/null || echo "starting")
   [ "$status" = "healthy" ] && break
   sleep 5
-  [ "$i" -eq 60 ] && die "El motor no terminó de arrancar después de 5 minutos. Revisá: docker compose logs engine"
+  [ "$i" -eq 60 ] && die "El motor no terminó de arrancar después de 5 minutos. Revisá: ./elea-logs.sh engine"
 done
 
 log "Levantando el Guardian (backend + panel)"
@@ -77,7 +77,7 @@ log "Esperando a que el Guardian esté listo (puede tardar el primer arranque)"
 for i in $(seq 1 60); do
   curl -sf -o /dev/null http://localhost:8091/health && break
   sleep 3
-  [ "$i" -eq 60 ] && die "El backend no respondió después de 3 minutos. Revisá: docker compose logs backend"
+  [ "$i" -eq 60 ] && die "El backend no respondió después de 3 minutos. Revisá: ./elea-logs.sh backend"
 done
 
 # ── 4. Bootstrap del admin (primer login lo crea) ───────────────────────────────────
@@ -111,7 +111,7 @@ if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
   # NO usar `die` adentro (corre en subshell vía `$(...)`, un exit ahí no frena al
   # script principal) — devuelve vacío en error y el caller lo chequea.
   create_service_key() {
-    local username="$1" email="$2" name="$3"
+    local username="$1" email="$2" name="$3" can_act_on_behalf="${4:-false}"
     local password user_id
     password=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')
     curl -s -X POST http://localhost:8091/api/v1/users \
@@ -123,9 +123,12 @@ if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
       echo "ERROR:usuario '${username}': $(cat /tmp/elea_svc_user.json)" >&2
       return 1
     fi
+    # Spec 043 (US2/US4, T032): tool_type="servicio" (ya no "chat-ui" — esas dos llaves
+    # se auditaban bajo la superficie del chat interno, diagnostico.md §3/§4 de la 043) +
+    # can_act_on_behalf explícito por llave (solo la de enmascarado lo necesita, contrato 2).
     curl -s -X POST http://localhost:8091/api/v1/keys \
       -H "Authorization: Bearer ${ADMIN_TOKEN}" -H 'Content-Type: application/json' \
-      -d "{\"name\":\"${name}\",\"user_id\":\"${user_id}\",\"tool_type\":\"chat-ui\",\"rpm_limit\":120,\"tpm_limit\":200000}" \
+      -d "{\"name\":\"${name}\",\"user_id\":\"${user_id}\",\"tool_type\":\"servicio\",\"can_act_on_behalf\":${can_act_on_behalf},\"rpm_limit\":120,\"tpm_limit\":200000}" \
       > /tmp/elea_svc_key.json
     local plain_key
     plain_key=$(python3 -c 'import json;d=json.load(open("/tmp/elea_svc_key.json"));print(d.get("plain_key",""))')
@@ -137,9 +140,12 @@ if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
   }
   # ".local" lo rechaza el validador de email (dominio reservado) — usar un dominio
   # con TLD real, aunque sea ficticio.
-  PROVIDER_KEY=$(create_service_key "svc.anythingllm-provider" "svc.anythingllm-provider@elea-internal.com" "anythingllm-provider") \
+  PROVIDER_KEY=$(create_service_key "svc.anythingllm-provider" "svc.anythingllm-provider@elea-internal.com" "anythingllm-provider" "false") \
     || die "No se pudo aprovisionar la llave del proveedor de AnythingLLM (ver error arriba)."
-  MASKING_VIRTUAL_KEY=$(create_service_key "svc.rag-masking" "svc.rag-masking@elea-internal.com" "rag-masking") \
+  # can_act_on_behalf=true: esta es la llave que Eleia Hub usa para enmascarar documentos
+  # en nombre de la persona real (contrato 2 de la 043) — la del proveedor NO lo necesita,
+  # habla con el motor por su cuenta, no en nombre de nadie.
+  MASKING_VIRTUAL_KEY=$(create_service_key "svc.rag-masking" "svc.rag-masking@elea-internal.com" "rag-masking" "true") \
     || die "No se pudo aprovisionar la llave de enmascarado (ver error arriba)."
   echo "MASKING_VIRTUAL_KEY=${MASKING_VIRTUAL_KEY}" >> .env
 

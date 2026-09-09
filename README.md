@@ -47,10 +47,12 @@ docker compose up -d   # prende de nuevo (rápido, ya está todo generado)
 ## Si algo falla
 
 ```bash
-docker compose ps                 # estado de cada contenedor
-docker compose logs backend       # logs del Guardian
-docker compose logs client        # logs del cliente RAG
-docker compose logs anythingllm   # logs de AnythingLLM
+docker compose ps            # estado de cada contenedor
+./elea-logs.sh backend       # logs del Guardian
+./elea-logs.sh client        # logs del cliente RAG
+./elea-logs.sh anythingllm   # logs de AnythingLLM
+./elea-logs.sh engine        # logs del motor (usar esto, no "docker compose logs engine" —
+                              # ese comando muestra el nombre interno del motor sin filtrar)
 ```
 
 **"Authentication failed against database server... credentials... not valid"** en los

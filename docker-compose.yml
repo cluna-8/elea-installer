@@ -135,10 +135,17 @@ services:
     restart: unless-stopped
 
   anythingllm:
-    image: mintplexlabs/anythingllm:latest
+    # Versión fijada (spec 043 US1, T021 — antes `:latest`, sin control de cuándo cambia).
+    # 1.16.1 confirmada como la más reciente publicada en Docker Hub al 08-sep-2026. Subir la
+    # versión es una tarea deliberada con prueba, no un efecto colateral de un `docker pull`.
+    image: mintplexlabs/anythingllm:1.16.1
     container_name: elea-anythingllm
-    ports:
-      - "3001:3001"
+    # NO se publica el puerto al host (08-sep): el aislamiento por usuario (spec 043 US1) vive
+    # en el backend Guardian y en Eleia Hub — si este puerto llegara a estar expuesto, cualquiera
+    # en la misma red podría hablar directo con AnythingLLM (single-user, sin las verificaciones
+    # nuevas) y saltearse todo ese control. Solo `client` (misma red `elea-net`) necesita hablarle.
+    expose:
+      - "3001"
     environment:
       - SERVER_PORT=3001
       - STORAGE_DIR=/app/server/storage
