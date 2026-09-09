@@ -175,11 +175,18 @@ services:
     environment:
       - PORT=8095
       - ELEA_BACKEND_URL=http://backend:8000/api/v1
-      - ELEA_SERVICE_USERNAME=admin
-      - ELEA_SERVICE_PASSWORD=${ADMIN_PASSWORD:?Falta ADMIN_PASSWORD en .env}
+      # ELEA_SERVICE_USERNAME/PASSWORD: quitadas (09-sep) — `server.js` ya no las lee
+      # desde que T022 de la 044 cambió el presupuesto a autoservicio (sesión propia de
+      # cada persona, no una cuenta de admin de fondo); quedaban acá sin ningún efecto.
       - ANYTHINGLLM_URL=http://anythingllm:3001
       - ANYTHINGLLM_API_KEY=${ANYTHINGLLM_API_KEY:-}
       - MASKING_VIRTUAL_KEY=${MASKING_VIRTUAL_KEY:-}
+      # Marca en runtime (encontrado en revisión, 09-sep): "Eleia Hub es un cliente más" —
+      # el código del Hub no tiene ninguna marca atada, la fija ESTA instalación por env.
+      - HUB_BRAND_NAME=Eleia Hub
+      - HUB_BRAND_TAGLINE=Gobernanza IA y RAG Corporativo
+      - HUB_BRAND_TENANT_LABEL=Laboratorios ELEA
+      - HUB_BRAND_GOVERNANCE_LABEL=Eleia GuardIAn
     volumes:
       - client_uploads:/app/public/uploads
     depends_on:
