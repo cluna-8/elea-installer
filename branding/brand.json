@@ -1,6 +1,7 @@
 {
   "name": "Eleia Guardian",
   "tagline": "Panel de administración de Eleia",
+  "logo": "eleia-logo.png",
   "supportContact": "",
   "colors": {},
   "docsUrl": "/docs/"
