@@ -149,6 +149,15 @@ if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
     || die "No se pudo aprovisionar la llave de enmascarado (ver error arriba)."
   echo "MASKING_VIRTUAL_KEY=${MASKING_VIRTUAL_KEY}" >> .env
 
+  # Spec 048: DB-GPT (motor de análisis exacto de Excel/CSV) resuelve TODAS sus llamadas de
+  # modelo contra el motor interno de Eleia — nunca una credencial de Azure propia. can_act_on_
+  # behalf=true: el pedido explícito es que el costo se atribuya a la persona real que preguntó,
+  # no a esta llave de servicio (mismo criterio que svc.rag-masking, distinto de svc.anythingllm-
+  # provider que deliberadamente NO lo tiene).
+  DBGPT_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.dbgpt-excel" "svc.dbgpt-excel@elea-internal.com" "dbgpt-excel" "true") \
+    || die "No se pudo aprovisionar la llave del motor de análisis exacto (ver error arriba)."
+  echo "DBGPT_ENGINE_VIRTUAL_KEY=${DBGPT_ENGINE_VIRTUAL_KEY}" >> .env
+
   log "Conectando AnythingLLM al motor del Guardian"
   curl -s -X POST http://localhost:3001/api/v1/system/update-env \
     -H "Authorization: Bearer ${ANYTHINGLLM_API_KEY}" -H 'Content-Type: application/json' \
