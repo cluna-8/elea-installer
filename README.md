@@ -32,10 +32,18 @@ aisladas entre sí.
 
 | Qué | URL |
 |---|---|
-| Cliente RAG (para probar) | http://localhost:8095 |
+| Eleia Hub (chat con documentos, planillas, presentaciones) | http://localhost:8095 |
 | Panel del Guardian (admin, visual) | http://localhost:8090 |
 | API del Guardian (Swagger) | http://localhost:8091/docs |
 | AnythingLLM (interno, no hace falta entrar) | http://localhost:3001 |
+
+## Imágenes que publica el equipo (registro privado `ghcr.io/cluna-8`)
+
+`elea-guardian-backend`, `elea-guardian-frontend`, `elea-guardian-engine`, `elea-guardian-nlp`,
+`elea-rag-client` (Eleia Hub) y, desde la spec 050, **`elea-tabular`** (motor de planillas, se
+construye desde `elea/tabular/`). Presenton y AnythingLLM son imágenes públicas fijadas por
+digest/versión. Antes de instalar una versión nueva en un cliente, publicar las imágenes con el
+tag correspondiente.
 
 ## Apagar / prender
 

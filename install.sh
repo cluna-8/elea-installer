@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instalador Elea — Guardian + cliente RAG + AnythingLLM.
+# Instalador Elea — Guardian + Eleia Hub + motores (documentos, planillas, presentaciones).
 # Un solo comando: ./install.sh
 #
 # Automatiza todo lo que en el desarrollo se hizo a mano (bootstrap del admin,
@@ -105,8 +105,11 @@ if [ -z "${ANYTHINGLLM_API_KEY:-}" ]; then
   echo "ANYTHINGLLM_API_KEY=${ANYTHINGLLM_API_KEY}" >> .env
 fi
 
-# ── 6. Virtual keys de servicio (proveedor LLM de AnythingLLM + enmascarado) ────────
-if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
+# ── 6. Virtual keys de servicio (proveedor LLM de AnythingLLM + motores) ────────────
+# Spec 050 (12-sep-2026): el Hub YA NO enmascara (Guardian no recibe archivos), así que la
+# cuenta svc.rag-masking y MASKING_VIRTUAL_KEY dejaron de crearse. DB-GPT (svc.dbgpt-excel)
+# se retiró: lo reemplaza el motor tabular propio. Cada motor tiene su propia llave `svc.*`.
+if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
   log "Creando usuarios y llaves de servicio en el Guardian"
   # NO usar `die` adentro (corre en subshell vía `$(...)`, un exit ahí no frena al
   # script principal) — devuelve vacío en error y el caller lo chequea.
@@ -142,21 +145,18 @@ if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
   # con TLD real, aunque sea ficticio.
   PROVIDER_KEY=$(create_service_key "svc.anythingllm-provider" "svc.anythingllm-provider@elea-internal.com" "anythingllm-provider" "false") \
     || die "No se pudo aprovisionar la llave del proveedor de AnythingLLM (ver error arriba)."
-  # can_act_on_behalf=true: esta es la llave que Eleia Hub usa para enmascarar documentos
-  # en nombre de la persona real (contrato 2 de la 043) — la del proveedor NO lo necesita,
-  # habla con el motor por su cuenta, no en nombre de nadie.
-  MASKING_VIRTUAL_KEY=$(create_service_key "svc.rag-masking" "svc.rag-masking@elea-internal.com" "rag-masking" "true") \
-    || die "No se pudo aprovisionar la llave de enmascarado (ver error arriba)."
-  echo "MASKING_VIRTUAL_KEY=${MASKING_VIRTUAL_KEY}" >> .env
-
-  # Spec 048: DB-GPT (motor de análisis exacto de Excel/CSV) resuelve TODAS sus llamadas de
-  # modelo contra el motor interno de Eleia — nunca una credencial de Azure propia. can_act_on_
-  # behalf=true: el pedido explícito es que el costo se atribuya a la persona real que preguntó,
-  # no a esta llave de servicio (mismo criterio que svc.rag-masking, distinto de svc.anythingllm-
-  # provider que deliberadamente NO lo tiene).
-  DBGPT_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.dbgpt-excel" "svc.dbgpt-excel@elea-internal.com" "dbgpt-excel" "true") \
-    || die "No se pudo aprovisionar la llave del motor de análisis exacto (ver error arriba)."
-  echo "DBGPT_ENGINE_VIRTUAL_KEY=${DBGPT_ENGINE_VIRTUAL_KEY}" >> .env
+  # Motor tabular (planillas, spec 050 FR-031): can_act_on_behalf=true → manda
+  # X-Guardian-Acting-User con la persona que preguntó.
+  TABULAR_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.tabular" "svc.tabular@elea-internal.com" "tabular" "true") \
+    || die "No se pudo aprovisionar la llave del motor de planillas (ver error arriba)."
+  echo "TABULAR_ENGINE_VIRTUAL_KEY=${TABULAR_ENGINE_VIRTUAL_KEY}" >> .env
+  # Motor de presentaciones (Presenton): no permite cabeceras extra → sin acting-user.
+  PRESENTON_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.presenton" "svc.presenton@elea-internal.com" "presenton" "false") \
+    || die "No se pudo aprovisionar la llave del motor de presentaciones (ver error arriba)."
+  echo "PRESENTON_ENGINE_VIRTUAL_KEY=${PRESENTON_ENGINE_VIRTUAL_KEY}" >> .env
+  # Token interno Hub → tabular (no es de Guardian; solo viaja por la red interna).
+  TABULAR_INTERNAL_TOKEN=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
+  echo "TABULAR_INTERNAL_TOKEN=${TABULAR_INTERNAL_TOKEN}" >> .env
 
   log "Conectando AnythingLLM al motor del Guardian"
   curl -s -X POST http://localhost:3001/api/v1/system/update-env \
@@ -165,9 +165,10 @@ if [ -z "${MASKING_VIRTUAL_KEY:-}" ]; then
     > /dev/null
 fi
 
-# ── 7. Levantar el cliente (ya con las keys en .env) ────────────────────────────────
-log "Levantando el cliente RAG"
-docker compose up -d client
+# ── 7. Levantar los motores y el Hub (ya con las keys en .env) ─────────────────────
+log "Levantando el motor de planillas, el de presentaciones y Eleia Hub"
+docker compose pull tabular presenton client 2>&1 | grep -v "^ " || true
+docker compose up -d tabular presenton client
 
 echo
 echo "================================================================"
@@ -175,7 +176,7 @@ echo "  Listo. Todo corriendo."
 echo
 echo "  Panel del Guardian:  http://localhost:8090"
 echo "  API del Guardian:    http://localhost:8091/docs"
-echo "  Cliente RAG:         http://localhost:8095"
+echo "  Eleia Hub:           http://localhost:8095   (chat con documentos, planillas, presentaciones)"
 echo
 echo "  Admin:  usuario 'admin', contraseña: ${ADMIN_PASSWORD}"
 echo "  (guardada en .env — no se vuelve a mostrar)"
