@@ -76,7 +76,7 @@ Probado el 14-sep-2026 sobre una instalación previa con cuentas de servicio ya 
 
 ```bash
 cd ~/Eleia-cli
-git pull                                   # este repo, desde Azure DevOps
+git pull                                   # este repo (GitHub público; Azure DevOps solo de respaldo)
 echo -n "$TOKEN" | docker login ghcr.io -u cluna-8 --password-stdin   # si el token venció
 ./install.sh
 ```
@@ -93,10 +93,37 @@ Al terminar, las sesiones del Hub se cierran (viven en memoria): cada persona vu
 Verificar: entrar al Hub, ver las tres secciones (documentos, planillas, presentaciones) y, como
 `admin`, abrir `http://<servidor>:8097/templates`.
 
-## Sincronizar este instalador a Azure DevOps
+## Cómo llega este instalador al servidor de Elea (decisión del 14-sep-2026)
 
-Regla: a Azure DevOps (`celula-ia-proyectos`, rama `master`) va **solo** este repo, ya probado
-desde cero. Nada de specs ni código en desarrollo (eso vive en `github.com/cluna-8/elea`).
+**Decisión del dueño (14-sep-2026), por los problemas de acceso que hubo en Elea:** los repos se
+hacen **públicos** para que desde el servidor de Elea se puedan bajar directo desde GitHub las
+instrucciones (este repo) y el desarrollo (`cluna-8/elea`), sin token y sin pasar por Azure DevOps.
+Esto reemplaza la regla del 31-ago ("GitHub privado, Azure DevOps como puente"). Azure DevOps queda
+solo como respaldo si la red del servidor vuelve a bloquear GitHub.
+
+Estado al 14-sep: **pendiente de ejecutar**. `cluna-8/elea-installer` y `cluna-8/elea` siguen
+privados; de las imágenes en `ghcr.io/cluna-8` solo `elea-guardian-backend` y `elea-rag-client`
+son públicas (las otras cuatro, privadas). Para que el servidor baje todo sin credenciales hacen
+falta las tres cosas: los dos repos públicos, las seis imágenes públicas, y este README sin la
+sección de login al registro.
+
+Checklist antes de hacer público cada repo (hecho el 14-sep para los dos, limpio):
+- ningún `.env`, llave de API, contraseña ni token en el árbol ni en el historial
+  (`git log --all -p -G 'API_KEY=[A-Za-z0-9]{20,}'`); en `elea` lo único rastreado son la clave
+  **pública** de licencias (`sentinel_public_keys.pem`) y la licencia de demo `dev-demo.lic`;
+- nada del cliente que no deba verse (las specs mencionan planillas reales de Elea solo por nombre
+  de archivo; los datos no están en el repo).
+
+Después de hacerlo público, en el servidor:
+
+```bash
+cd ~/Eleia-cli
+git remote set-url origin https://github.com/cluna-8/elea-installer.git
+git pull origin main
+./install.sh
+```
+
+Respaldo por Azure DevOps (solo si GitHub vuelve a estar bloqueado):
 
 ```bash
 git remote add azure "https://dev.azure.com/celula-ia/C%C3%A9lula%20IA%20Proyectos/_git/celula-ia-proyectos"   # una sola vez
