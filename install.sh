@@ -53,7 +53,7 @@ set -a; source .env; set +a
 # ── 2. Registro de imágenes ─────────────────────────────────────────────────────────
 # Las imágenes son públicas (decisión del 14-sep-2026): no hace falta login. Solo si la
 # descarga falla (imagen todavía privada, o red que exige credenciales) se pide un token.
-if ! docker pull -q ghcr.io/cluna-8/elea-guardian-backend:latest >/dev/null 2>&1; then
+if ! docker pull -q ghcr.io/cluna-8/elea-guardian-engine:latest >/dev/null 2>&1; then
   log "No se pudo descargar la imagen del Guardian sin credenciales — login al registro"
   echo "Pedí un token de lectura (read:packages) a quien te dio este instalador."
   read -rp "Usuario de GitHub: " GHCR_USER
@@ -138,6 +138,9 @@ if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
         return 1
       fi
       echo "  (la cuenta ${username} ya existía: se revoca su llave anterior y se emite una nueva)" >&2
+      # El motor exige alias únicos entre TODAS las llaves, incluso revocadas (visto en el
+      # servidor de Elea, 14-sep): la nueva lleva sufijo de fecha.
+      name="${name}-$(date +%Y%m%d%H%M)"
       # Guardian permite UNA llave activa por cuenta y herramienta: revocar la vieja primero.
       for kid in $(curl -s http://localhost:8091/api/v1/keys -H "Authorization: Bearer ${ADMIN_TOKEN}" \
           | python3 -c 'import json,sys;u=sys.argv[1];print(" ".join(k["id"] for k in json.load(sys.stdin) if k.get("user_id")==u and k.get("tool_type")=="servicio"))' "${user_id}"); do
