@@ -36,15 +36,26 @@ aisladas entre sí.
 | Plantillas de presentaciones (solo admins, misma sesión del Hub) | http://localhost:8097/templates |
 | Panel del Guardian (admin, visual) | http://localhost:8090 |
 | API del Guardian (Swagger) | http://localhost:8091/docs |
-| AnythingLLM (interno, no hace falta entrar) | http://localhost:3001 |
 
-## Imágenes que publica el equipo (registro privado `ghcr.io/cluna-8`)
+## Imágenes que publica el equipo (registro `ghcr.io/cluna-8`)
 
 `elea-guardian-backend`, `elea-guardian-frontend`, `elea-guardian-engine`, `elea-guardian-nlp`,
-`elea-rag-client` (Eleia Hub) y, desde la spec 050, **`elea-tabular`** (motor de planillas, se
-construye desde `elea/tabular/`). Presenton y AnythingLLM son imágenes públicas fijadas por
-digest/versión. Antes de instalar una versión nueva en un cliente, publicar las imágenes con el
-tag correspondiente.
+`elea-rag-client` (Eleia Hub) y, desde la spec 050, **`elea-tabular`** (motor de planillas).
+Presenton y AnythingLLM son imágenes públicas fijadas por digest/versión.
+
+**Publicarlas siempre con el script del repo `elea`**, nunca con `docker build` a mano:
+
+```bash
+VERSION=2026-09-14 deploy/release/publish-elea.sh          # todas
+ONLY="backend rag-client" deploy/release/publish-elea.sh   # solo algunas
+```
+
+Motivo (encontrado el 14-sep-2026 probando este instalador desde cero): el backend construido
+con `backend/Dockerfile` (el de desarrollo) arranca en bucle con `No module named 'extensions'`,
+porque en desarrollo esa carpeta llega por un bind mount que la imagen no tiene. La imagen
+distribuible sale de `backend/Dockerfile.standalone`; el script fija eso y lo verifica antes de
+subir. Después de publicar, probar este instalador desde cero (carpeta nueva, `docker compose
+down -v` si había algo) antes de sincronizarlo a Azure DevOps.
 
 ## Después de instalar
 
@@ -57,6 +68,40 @@ tag correspondiente.
 3. **Límites conocidos**: la sesión del Hub vive en memoria (reiniciar el contenedor cierra las
    sesiones); las planillas `.xls` viejas no se aceptan (solo `.csv` y `.xlsx`); el gasto de los
    motores se atribuye a sus cuentas `svc.*`, no a la persona.
+
+## Actualizar una instalación existente (servidor de Elea)
+
+El mismo `./install.sh` sirve para actualizar: no borra datos, no toca volúmenes ni el `.env`.
+Probado el 14-sep-2026 sobre una instalación previa con cuentas de servicio ya creadas.
+
+```bash
+cd ~/Eleia-cli
+git pull                                   # este repo, desde Azure DevOps
+echo -n "$TOKEN" | docker login ghcr.io -u cluna-8 --password-stdin   # si el token venció
+./install.sh
+```
+
+Qué hace en ese caso: descarga las imágenes nuevas y recrea solo los contenedores cuya imagen o
+configuración cambió (los espacios, documentos y usuarios sobreviven); las cuentas `svc.*` que ya
+existen se reutilizan (se revoca su llave anterior y se emite una nueva, porque Guardian permite
+una sola llave activa por cuenta); crea `svc.tabular` y `svc.presenton`; reconecta AnythingLLM al
+motor; y borra el contenedor viejo de DB-GPT (`exact-analysis-engine`) que ya no existe en este
+compose. Las variables viejas del `.env` (`MASKING_VIRTUAL_KEY`, `DBGPT_ENGINE_VIRTUAL_KEY`) quedan
+sin uso; se pueden borrar a mano.
+
+Al terminar, las sesiones del Hub se cierran (viven en memoria): cada persona vuelve a entrar.
+Verificar: entrar al Hub, ver las tres secciones (documentos, planillas, presentaciones) y, como
+`admin`, abrir `http://<servidor>:8097/templates`.
+
+## Sincronizar este instalador a Azure DevOps
+
+Regla: a Azure DevOps (`celula-ia-proyectos`, rama `master`) va **solo** este repo, ya probado
+desde cero. Nada de specs ni código en desarrollo (eso vive en `github.com/cluna-8/elea`).
+
+```bash
+git remote add azure "https://dev.azure.com/celula-ia/C%C3%A9lula%20IA%20Proyectos/_git/celula-ia-proyectos"   # una sola vez
+git push azure HEAD:master
+```
 
 ## Apagar / prender
 

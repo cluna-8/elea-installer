@@ -10,6 +10,12 @@ cd "$(dirname "$0")"
 
 log() { echo -e "\n\033[1;34m▶ $1\033[0m"; }
 die() { echo -e "\033[1;31m✗ $1\033[0m" >&2; exit 1; }
+# Escribe KEY=VALUE en .env reemplazando la línea si ya existe (el .env.example trae las
+# claves vacías; antes se agregaban al final y quedaban duplicadas).
+set_env() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi; }
+# AnythingLLM NO publica su puerto al host (aislamiento, 08-sep): se le habla desde adentro
+# de su propio contenedor (trae curl). Antes el instalador usaba localhost:3001 y fallaba.
+allm_curl() { docker exec elea-anythingllm curl -s "$@"; }
 
 command -v docker >/dev/null || die "Falta Docker. Instalalo antes de seguir: https://docs.docker.com/get-docker/"
 docker compose version >/dev/null 2>&1 || die "Falta Docker Compose v2 (viene con Docker Desktop / docker-compose-plugin)."
@@ -92,8 +98,9 @@ ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | python3 -c 'import json,sys; d=json.load(sys
 if [ -z "${ANYTHINGLLM_API_KEY:-}" ]; then
   log "Esperando a AnythingLLM y generando su API key"
   for i in $(seq 1 30); do
-    curl -sf -o /dev/null http://localhost:3001/ && break
+    allm_curl -f -o /dev/null http://localhost:3001/api/ping && break
     sleep 2
+    [ "$i" -eq 30 ] && die "AnythingLLM no respondió después de 1 minuto. Revisá: ./elea-logs.sh anythingllm"
   done
   ANYTHINGLLM_API_KEY=$(docker exec elea-anythingllm node -e "
     const {PrismaClient} = require('/app/server/node_modules/@prisma/client');
@@ -102,7 +109,7 @@ if [ -z "${ANYTHINGLLM_API_KEY:-}" ]; then
       .then(r => console.log(r.secret)).finally(() => process.exit());
   " | tail -1)
   [ -n "$ANYTHINGLLM_API_KEY" ] || die "No se pudo generar la API key de AnythingLLM."
-  echo "ANYTHINGLLM_API_KEY=${ANYTHINGLLM_API_KEY}" >> .env
+  set_env ANYTHINGLLM_API_KEY "${ANYTHINGLLM_API_KEY}"
 fi
 
 # ── 6. Virtual keys de servicio (proveedor LLM de AnythingLLM + motores) ────────────
@@ -123,8 +130,20 @@ if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
       > /tmp/elea_svc_user.json
     user_id=$(python3 -c 'import json;d=json.load(open("/tmp/elea_svc_user.json"));print(d.get("id",""))')
     if [ -z "$user_id" ]; then
-      echo "ERROR:usuario '${username}': $(cat /tmp/elea_svc_user.json)" >&2
-      return 1
+      # Actualización de una instalación existente: la cuenta ya está (la creó un instalador
+      # anterior) → se reutiliza y se le emite una llave nueva; la vieja sigue válida.
+      user_id=$(curl -s "http://localhost:8091/api/v1/users?include_service=true" -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        | python3 -c 'import json,sys;u=sys.argv[1];print(next((x["id"] for x in json.load(sys.stdin) if x.get("username")==u),""))' "${username}")
+      if [ -z "$user_id" ]; then
+        echo "ERROR:usuario '${username}': $(cat /tmp/elea_svc_user.json)" >&2
+        return 1
+      fi
+      echo "  (la cuenta ${username} ya existía: se revoca su llave anterior y se emite una nueva)" >&2
+      # Guardian permite UNA llave activa por cuenta y herramienta: revocar la vieja primero.
+      for kid in $(curl -s http://localhost:8091/api/v1/keys -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+          | python3 -c 'import json,sys;u=sys.argv[1];print(" ".join(k["id"] for k in json.load(sys.stdin) if k.get("user_id")==u and k.get("tool_type")=="servicio"))' "${user_id}"); do
+        curl -s -o /dev/null -X DELETE "http://localhost:8091/api/v1/keys/${kid}" -H "Authorization: Bearer ${ADMIN_TOKEN}"
+      done
     fi
     # Spec 043 (US2/US4, T032): tool_type="servicio" (ya no "chat-ui" — esas dos llaves
     # se auditaban bajo la superficie del chat interno, diagnostico.md §3/§4 de la 043) +
@@ -143,34 +162,40 @@ if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
   }
   # ".local" lo rechaza el validador de email (dominio reservado) — usar un dominio
   # con TLD real, aunque sea ficticio.
-  PROVIDER_KEY=$(create_service_key "svc.anythingllm-provider" "svc.anythingllm-provider@elea-internal.com" "anythingllm-provider" "false") \
+  ANYTHINGLLM_PROVIDER_VIRTUAL_KEY=$(create_service_key "svc.anythingllm-provider" "svc.anythingllm-provider@elea-internal.com" "anythingllm-provider" "false") \
     || die "No se pudo aprovisionar la llave del proveedor de AnythingLLM (ver error arriba)."
+  set_env ANYTHINGLLM_PROVIDER_VIRTUAL_KEY "${ANYTHINGLLM_PROVIDER_VIRTUAL_KEY}"
   # Motor tabular (planillas, spec 050 FR-031): can_act_on_behalf=true → manda
   # X-Guardian-Acting-User con la persona que preguntó.
   TABULAR_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.tabular" "svc.tabular@elea-internal.com" "tabular" "true") \
     || die "No se pudo aprovisionar la llave del motor de planillas (ver error arriba)."
-  echo "TABULAR_ENGINE_VIRTUAL_KEY=${TABULAR_ENGINE_VIRTUAL_KEY}" >> .env
+  set_env TABULAR_ENGINE_VIRTUAL_KEY "${TABULAR_ENGINE_VIRTUAL_KEY}"
   # Motor de presentaciones (Presenton): no permite cabeceras extra → sin acting-user.
   # Presenton manda varias diapositivas en paralelo, con imagen (plantillas): cupo alto de
   # tokens por minuto, si no el motor devuelve 429 a mitad de la creación de una plantilla.
   PRESENTON_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.presenton" "svc.presenton@elea-internal.com" "presenton" "false" 300 2000000) \
     || die "No se pudo aprovisionar la llave del motor de presentaciones (ver error arriba)."
-  echo "PRESENTON_ENGINE_VIRTUAL_KEY=${PRESENTON_ENGINE_VIRTUAL_KEY}" >> .env
+  set_env PRESENTON_ENGINE_VIRTUAL_KEY "${PRESENTON_ENGINE_VIRTUAL_KEY}"
   # Token interno Hub → tabular (no es de Guardian; solo viaja por la red interna).
   TABULAR_INTERNAL_TOKEN=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
-  echo "TABULAR_INTERNAL_TOKEN=${TABULAR_INTERNAL_TOKEN}" >> .env
-
-  log "Conectando AnythingLLM al motor del Guardian"
-  curl -s -X POST http://localhost:3001/api/v1/system/update-env \
-    -H "Authorization: Bearer ${ANYTHINGLLM_API_KEY}" -H 'Content-Type: application/json' \
-    -d "{\"LLMProvider\":\"generic-openai\",\"GenericOpenAiBasePath\":\"http://engine:4000/v1\",\"GenericOpenAiModelPref\":\"azure-gpt-4o-mini\",\"GenericOpenAiKey\":\"${PROVIDER_KEY}\"}" \
-    > /dev/null
+  set_env TABULAR_INTERNAL_TOKEN "${TABULAR_INTERNAL_TOKEN}"
 fi
+
+# Siempre (idempotente): antes vivía dentro del bloque de arriba y, si la primera corrida se
+# cortaba justo después de crear las llaves, la segunda ya no conectaba AnythingLLM al motor.
+log "Conectando AnythingLLM al motor del Guardian"
+[ -n "${ANYTHINGLLM_PROVIDER_VIRTUAL_KEY:-}" ] || die "Falta ANYTHINGLLM_PROVIDER_VIRTUAL_KEY en .env (instalación a medias: borrá TABULAR_ENGINE_VIRTUAL_KEY del .env y volvé a correr)."
+ALLM_RESP=$(allm_curl -X POST http://localhost:3001/api/v1/system/update-env \
+  -H "Authorization: Bearer ${ANYTHINGLLM_API_KEY}" -H 'Content-Type: application/json' \
+  -d "{\"LLMProvider\":\"generic-openai\",\"GenericOpenAiBasePath\":\"http://engine:4000/v1\",\"GenericOpenAiModelPref\":\"${ANYTHINGLLM_MODEL:-azure-gpt-4o-mini}\",\"GenericOpenAiKey\":\"${ANYTHINGLLM_PROVIDER_VIRTUAL_KEY}\"}")
+echo "$ALLM_RESP" | grep -q '"error":false' || die "AnythingLLM no aceptó la configuración del motor: ${ALLM_RESP}"
 
 # ── 7. Levantar los motores y el Hub (ya con las keys en .env) ─────────────────────
 log "Levantando el motor de planillas, el de presentaciones y Eleia Hub"
 docker compose pull tabular presenton client 2>&1 | grep -v "^ " || true
-docker compose up -d tabular presenton client
+# --remove-orphans: al actualizar desde una instalación anterior borra el contenedor de DB-GPT
+# (exact-analysis-engine), que ya no está en este compose.
+docker compose up -d --remove-orphans tabular presenton client
 
 echo
 echo "================================================================"

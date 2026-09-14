@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Instalador Elea — Guardian + cliente RAG + AnythingLLM, todo junto.
 # Solo referencia IMÁGENES ya construidas (ghcr.io/cluna-8/...) — ningún código
 # fuente del Guardian viaja en este repo. Ver install.sh e INSTALL.md.
