@@ -46,6 +46,18 @@ construye desde `elea/tabular/`). Presenton y AnythingLLM son imágenes pública
 digest/versión. Antes de instalar una versión nueva en un cliente, publicar las imágenes con el
 tag correspondiente.
 
+## Después de instalar
+
+1. **Plantilla corporativa de presentaciones**: entrar al Hub como `admin`, abrir la pestaña
+   "Plantillas" (o `http://localhost:8097/templates`), subir el `.pptx` corporativo, aceptar las
+   fuentes de respaldo y confirmar. Tarda unos 5 minutos por 6 diapositivas. Después aparece
+   primera en el formulario "Crear presentación".
+2. **Planillas con encabezados abreviados** (exportaciones de SAP): en el espacio de planillas,
+   clic en cada columna para escribir qué significa. Mejora las respuestas.
+3. **Límites conocidos**: la sesión del Hub vive en memoria (reiniciar el contenedor cierra las
+   sesiones); las planillas `.xls` viejas no se aceptan (solo `.csv` y `.xlsx`); el gasto de los
+   motores se atribuye a sus cuentas `svc.*`, no a la persona.
+
 ## Apagar / prender
 
 ```bash
