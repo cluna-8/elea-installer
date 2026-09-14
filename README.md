@@ -33,6 +33,7 @@ aisladas entre sí.
 | Qué | URL |
 |---|---|
 | Eleia Hub (chat con documentos, planillas, presentaciones) | http://localhost:8095 |
+| Plantillas de presentaciones (solo admins, misma sesión del Hub) | http://localhost:8097/templates |
 | Panel del Guardian (admin, visual) | http://localhost:8090 |
 | API del Guardian (Swagger) | http://localhost:8091/docs |
 | AnythingLLM (interno, no hace falta entrar) | http://localhost:3001 |

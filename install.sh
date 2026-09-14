@@ -114,7 +114,7 @@ if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
   # NO usar `die` adentro (corre en subshell vía `$(...)`, un exit ahí no frena al
   # script principal) — devuelve vacío en error y el caller lo chequea.
   create_service_key() {
-    local username="$1" email="$2" name="$3" can_act_on_behalf="${4:-false}"
+    local username="$1" email="$2" name="$3" can_act_on_behalf="${4:-false}" rpm="${5:-120}" tpm="${6:-200000}"
     local password user_id
     password=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')
     curl -s -X POST http://localhost:8091/api/v1/users \
@@ -131,7 +131,7 @@ if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
     # can_act_on_behalf explícito por llave (solo la de enmascarado lo necesita, contrato 2).
     curl -s -X POST http://localhost:8091/api/v1/keys \
       -H "Authorization: Bearer ${ADMIN_TOKEN}" -H 'Content-Type: application/json' \
-      -d "{\"name\":\"${name}\",\"user_id\":\"${user_id}\",\"tool_type\":\"servicio\",\"can_act_on_behalf\":${can_act_on_behalf},\"rpm_limit\":120,\"tpm_limit\":200000}" \
+      -d "{\"name\":\"${name}\",\"user_id\":\"${user_id}\",\"tool_type\":\"servicio\",\"can_act_on_behalf\":${can_act_on_behalf},\"rpm_limit\":${rpm},\"tpm_limit\":${tpm}}" \
       > /tmp/elea_svc_key.json
     local plain_key
     plain_key=$(python3 -c 'import json;d=json.load(open("/tmp/elea_svc_key.json"));print(d.get("plain_key",""))')
@@ -151,7 +151,9 @@ if [ -z "${TABULAR_ENGINE_VIRTUAL_KEY:-}" ]; then
     || die "No se pudo aprovisionar la llave del motor de planillas (ver error arriba)."
   echo "TABULAR_ENGINE_VIRTUAL_KEY=${TABULAR_ENGINE_VIRTUAL_KEY}" >> .env
   # Motor de presentaciones (Presenton): no permite cabeceras extra → sin acting-user.
-  PRESENTON_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.presenton" "svc.presenton@elea-internal.com" "presenton" "false") \
+  # Presenton manda varias diapositivas en paralelo, con imagen (plantillas): cupo alto de
+  # tokens por minuto, si no el motor devuelve 429 a mitad de la creación de una plantilla.
+  PRESENTON_ENGINE_VIRTUAL_KEY=$(create_service_key "svc.presenton" "svc.presenton@elea-internal.com" "presenton" "false" 300 2000000) \
     || die "No se pudo aprovisionar la llave del motor de presentaciones (ver error arriba)."
   echo "PRESENTON_ENGINE_VIRTUAL_KEY=${PRESENTON_ENGINE_VIRTUAL_KEY}" >> .env
   # Token interno Hub → tabular (no es de Guardian; solo viaja por la red interna).
@@ -177,6 +179,7 @@ echo
 echo "  Panel del Guardian:  http://localhost:8090"
 echo "  API del Guardian:    http://localhost:8091/docs"
 echo "  Eleia Hub:           http://localhost:8095   (chat con documentos, planillas, presentaciones)"
+echo "  Plantillas (admin):  http://localhost:8097/templates   (cargar la plantilla corporativa)"
 echo
 echo "  Admin:  usuario 'admin', contraseña: ${ADMIN_PASSWORD}"
 echo "  (guardada en .env — no se vuelve a mostrar)"
