@@ -15,8 +15,8 @@ modelo (Azure OpenAI). Completalas y volvé a correr `./install.sh` — esa segu
 levanta todo, crea el usuario admin, conecta AnythingLLM al motor y te muestra la
 contraseña de admin generada.
 
-Las imágenes son privadas — el script te pide un usuario y token de GitHub con permiso
-`read:packages` la primera vez (te lo da quien te compartió este instalador).
+Repo e imágenes públicos (desde el 14-sep-2026): no hace falta ningún token. Solo si la
+descarga de imágenes fallara, el script pide usuario y token de GitHub (`read:packages`).
 
 ## Agregar gente que va a probar
 
@@ -101,11 +101,9 @@ instrucciones (este repo) y el desarrollo (`cluna-8/elea`), sin token y sin pasa
 Esto reemplaza la regla del 31-ago ("GitHub privado, Azure DevOps como puente"). Azure DevOps queda
 solo como respaldo si la red del servidor vuelve a bloquear GitHub.
 
-Estado al 14-sep: **pendiente de ejecutar**. `cluna-8/elea-installer` y `cluna-8/elea` siguen
-privados; de las imágenes en `ghcr.io/cluna-8` solo `elea-guardian-backend` y `elea-rag-client`
-son públicas (las otras cuatro, privadas). Para que el servidor baje todo sin credenciales hacen
-falta las tres cosas: los dos repos públicos, las seis imágenes públicas, y este README sin la
-sección de login al registro.
+Ejecutado el 14-sep: `cluna-8/elea-installer` y `cluna-8/elea` son públicos y el instalador ya
+no pide login al registro (solo si una descarga falla). Las imágenes de `ghcr.io/cluna-8` deben
+ser públicas las seis (la visibilidad de paquetes se cambia en la web de GitHub, no por API).
 
 Checklist antes de hacer público cada repo (hecho el 14-sep para los dos, limpio):
 - ningún `.env`, llave de API, contraseña ni token en el árbol ni en el historial

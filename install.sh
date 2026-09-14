@@ -50,13 +50,12 @@ fi
 set -a; source .env; set +a
 [ -n "${AZURE_OPENAI_API_KEY:-}" ] || die "Falta AZURE_OPENAI_API_KEY en .env — completalo y volvé a correr."
 
-# ── 2. Login al registro de imágenes (privado) ──────────────────────────────────────
-# Solo pide login si la imagen no está ya en la máquina (evita un login remoto
-# innecesario cuando ya se descargó antes, o en dev con las imágenes construidas
-# localmente con el mismo tag).
-if ! docker image inspect ghcr.io/cluna-8/elea-guardian-backend:latest >/dev/null 2>&1; then
-  log "Login al registro de imágenes"
-  echo "Las imágenes son privadas. Pedí un token de lectura (read:packages) a quien te dio este instalador."
+# ── 2. Registro de imágenes ─────────────────────────────────────────────────────────
+# Las imágenes son públicas (decisión del 14-sep-2026): no hace falta login. Solo si la
+# descarga falla (imagen todavía privada, o red que exige credenciales) se pide un token.
+if ! docker pull -q ghcr.io/cluna-8/elea-guardian-backend:latest >/dev/null 2>&1; then
+  log "No se pudo descargar la imagen del Guardian sin credenciales — login al registro"
+  echo "Pedí un token de lectura (read:packages) a quien te dio este instalador."
   read -rp "Usuario de GitHub: " GHCR_USER
   read -rsp "Token: " GHCR_TOKEN; echo
   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || die "No se pudo autenticar al registro."
