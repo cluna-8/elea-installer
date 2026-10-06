@@ -358,12 +358,13 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/health           
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/docs                              # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/internal/identity          # 404
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/redirect/health            # 404: la extensión todavía no está (lo esperado)
+curl -s http://localhost:8091/openapi.json | grep -o '"title":"[^"]*"' | head -1                # el título de la consola dice «Eleia GuardIAn»
 docker exec elea-db psql -U "${POSTGRES_USER:-elea_admin}" -d "${POSTGRES_DB:-elea_gateway}" -Atc 'SELECT count(*) FROM audit_logs'
 ```
 
 Desde **otra máquina de la LAN/VPN** (no el servidor): `curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/internal/identity` tiene que dar **404**.
 
-**Verificar.** Los códigos de arriba. Además, prueba funcional a mano con **una pregunta real por cada servicio** (Hub: chat con documentos, planillas, presentación; un texto **distinto** en cada una,
+**Verificar.** Los códigos de arriba. El título de la consola (`/openapi.json`) dice **«Eleia GuardIAn»** (lo fija `BRAND_NAME` en `docker-compose.yml`; no debería verse el default de fábrica del backend). Además, prueba funcional a mano con **una pregunta real por cada servicio** (Hub: chat con documentos, planillas, presentación; un texto **distinto** en cada una,
 porque el motor parece cachear pedidos idénticos): en cada una `audit_logs` sube en 1 (repetir el último `psql`) y `./migrar-base-motor.sh --gasto` (esperar ≥ 70 s) muestra el gasto de la llave. Como `admin`, abrir `http://<servidor>:8097/templates`.
 
 **Si falla**

@@ -157,6 +157,11 @@ services:
       # /gw/inspect (masking de documentos RAG); el motor la lee al desenmascarar.
       - SENTINEL_PII_VAULT_ENABLED=${SENTINEL_PII_VAULT_ENABLED:-true}
       - SENTINEL_PII_VAULT_TTL_SECONDS=${SENTINEL_PII_VAULT_TTL_SECONDS:-7776000}
+      # Título de la consola del Guardian (backend/src/main.py:78 lo lee con default
+      # 'Sentinel Secure AI Gateway'). Marca de runtime, no horneada (mismo criterio
+      # que HUB_BRAND_* del Hub en :262-268): esta instalación fija «Eleia GuardIAn».
+      # Literal acá (no en .env) — es la marca de la instalación, no un dato del operador.
+      - BRAND_NAME=Eleia GuardIAn
     depends_on:
       db: { condition: service_healthy }
       engine: { condition: service_healthy }
