@@ -13,6 +13,7 @@ die() { echo -e "\033[1;31m✗ $1\033[0m" >&2; exit 1; }
 # Escribe KEY=VALUE en .env reemplazando la línea si ya existe (el .env.example trae las
 # claves vacías; antes se agregaban al final y quedaban duplicadas).
 set_env() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi; }
+del_env() { sed -i "/^$1=/d" .env; unset "$1"; }
 # AnythingLLM NO publica su puerto al host (aislamiento, 08-sep): se le habla desde adentro
 # de su propio contenedor (trae curl). Antes el instalador usaba localhost:3001 y fallaba.
 allm_curl() { docker exec elea-anythingllm curl -s "$@"; }
@@ -37,6 +38,10 @@ content = content.replace('ADMIN_PASSWORD=', f'ADMIN_PASSWORD={secrets.token_url
 with open('.env', 'w') as f:
     f.write(content)
 PY
+  # Marca de instalación NUEVA: la segunda corrida (la que levanta todo) crea el usuario de cumplimiento
+  # y la borra. Una instalación que ya existía no la tiene: ahí ese usuario es una decisión explícita
+  # (./crear-super-admin.sh), no algo que aparece solo al actualizar.
+  set_env ELEA_SUPER_ADMIN_PENDIENTE 1
   echo
   echo "  Se creó .env con secretos generados. FALTA que completes las credenciales"
   echo "  reales del modelo (Azure OpenAI / Gemini) — editá .env y volvé a correr:"
@@ -124,6 +129,24 @@ ADMIN_LOGIN=$(curl -s -X POST http://localhost:8091/api/v1/users/login \
   -d "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD}\"}")
 ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("access_token",""))')
 [ -n "$ADMIN_TOKEN" ] || die "No se pudo crear/autenticar el admin. Respuesta: $ADMIN_LOGIN"
+
+# ── 4b. Usuario de cumplimiento (super_admin) ───────────────────────────────────────
+# Solo en una instalación nueva (marca puesta al generar el .env). Es otro usuario que el admin de la
+# empresa: crea Auditores y relaja el enmascarado de la 057. Su contraseña la genera el backend, se
+# muestra UNA vez (./crear-super-admin.sh) y no pasa por este script ni por ningún archivo. Si falla no
+# se aborta la instalación: la marca queda y la próxima corrida (o el comando a mano) lo reintenta.
+SUPER_ADMIN_NOTA=""
+if [ "${ELEA_SUPER_ADMIN_PENDIENTE:-}" = 1 ]; then
+  log "Creando el usuario de cumplimiento (super_admin)"
+  if ./crear-super-admin.sh; then
+    del_env ELEA_SUPER_ADMIN_PENDIENTE
+  else
+    echo "  ! No se pudo crear el usuario de cumplimiento; la instalación sigue. Reintentá más tarde: ./crear-super-admin.sh" >&2
+    SUPER_ADMIN_NOTA="Falta crear el usuario de cumplimiento: ./crear-super-admin.sh"
+  fi
+else
+  SUPER_ADMIN_NOTA="Usuario de cumplimiento (super_admin): ./crear-super-admin.sh lo crea una vez (si ya hay uno, no toca nada)"
+fi
 
 # ── 5. API key de AnythingLLM (solo si no la generamos antes) ──────────────────────
 if [ -z "${ANYTHINGLLM_API_KEY:-}" ]; then
@@ -243,6 +266,7 @@ echo
 echo "  Admin:  usuario 'admin', contraseña: ${ADMIN_PASSWORD}"
 echo "  (guardada en .env — no se vuelve a mostrar)"
 echo
+[ -z "${SUPER_ADMIN_NOTA}" ] || { echo "  ${SUPER_ADMIN_NOTA}"; echo; }
 echo "  Para cada persona que va a probar: crear su usuario en el Guardian"
 echo "  (POST http://localhost:8091/api/v1/users con el token de admin, o pedime"
 echo "  el script create-tester.sh) — todas entran a http://localhost:8095 con su"
