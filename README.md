@@ -145,17 +145,19 @@ cumplimiento», «Extensión de redirección de modelos»).
 | 7 | Verificar con redirección | no | nivel 1 del Paso 8 |
 | 8 | Vuelta atrás en dos niveles | nivel 1: corto · nivel 2: sí | — |
 
-> **Estado de la verificación.** Las piezas se probaron por separado: la separación de la base del motor con contenedores reales el 06-oct-2026
-> (`ENSAYO-SEPARAR-BASES.md`); todos los scripts y este runbook (que los comandos existan, el orden, las guardas) con Docker simulado
-> (`bash tests/test-runbook-actualizar.sh`, `bash tests/test-redirect-optin.sh`). **No se probó con contenedores reales** la activación de la extensión
-> ni su vuelta atrás, ni este orden completo de punta a punta: la prueba local del instalador con `ELEA_REDIRECT=1` (**T102**, en la PC del owner) tiene que
-> estar hecha **antes** del Paso 6 de este runbook. Los tiempos son de una PC con datos de prueba; el servidor de Elea no se midió.
+> **Estado de la verificación.** **T102** (7-oct-2026, PC del owner, contenedores reales; comandos, salidas y tiempos en `EVIDENCIA-T102.md`): el orden de los
+> Pasos 0 a 7 se corrió de punta a punta con `ELEA_REDIRECT=1`, más el nivel 1 del Paso 8 (apagar y volver a encender), y dio lo esperado. Antes se había probado la
+> separación de la base del motor con contenedores reales (`ENSAYO-SEPARAR-BASES.md`, 06-oct-2026) y los scripts con Docker simulado
+> (`bash tests/test-runbook-actualizar.sh`, `bash tests/test-redirect-optin.sh`). **No se probó con contenedores reales**: (1) el **nivel 2** del Paso 8 (restaurar el respaldo
+> previo con las imágenes base); (2) una conversación de Claude Desktop o Claude Code contra un destino Azure —falta la credencial del owner, que la prueba no cargó— ni, por lo tanto,
+> la auditoría de un pedido redirigido (postura y alcance del enmascarado); (3) el Paso 3 sobre una instalación vieja real: se corrió sobre una base compartida **armada para la
+> prueba** (copia de las tablas del motor dentro de la base del Guardian). Los tiempos son de una PC con datos de prueba; el servidor de Elea no se midió.
 >
-> **Marcadores a completar tras T102** (no se inventan; mientras estén, el runbook se niega a activar):
-> `<TAG-A-COMPLETAR-TRAS-T102>` (el `ELEA_EXT_VERSION` de las imágenes `-ext`, Paso 6); `ELEA_EXT_MIN_VERSION` en `install.sh`, hoy
-> `PENDIENTE-PRIMER-RELEASE`, que el release de las `-ext` reemplaza por su fecha (Pasos 2 y 6); las referencias por digest de las `-ext`
-> (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE`, opcionales, Paso 6); el nombre de la pantalla de auditoría del panel y el tiempo de corte
-> del Paso 6 (`[COMPLETAR-TRAS-T102]`, Pasos 6 y 7).
+> **Imágenes del candidato (no publicadas).** Se construyeron en local, con los mismos Dockerfile y contextos de `deploy/release/publish-elea.sh` (repo `elea`, rama final de la 057, `8dfb40c`) y **sin
+> subirlas a ningún registro**, con el tag `2026-10-07` (base) y `2026-10-07-ext`. Publicarlas es una decisión aparte del owner: `VERSION=2026-10-07 deploy/release/publish-elea.sh`, ya logueado en
+> el registro. `ELEA_EXT_MIN_VERSION` en `install.sh` ya vale `2026-10-07` y el Paso 6 usa ese mismo tag: **no quedan marcadores por completar**. Si el release sale con otra fecha, tiene que ser
+> **igual o posterior** a `2026-10-07` y construida desde esa rama o una posterior; ese tag es el que se pone en `ELEA_EXT_VERSION`. Las referencias por digest de las `-ext`
+> (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE`, opcionales) salen de las líneas `PINNED …` de ese release.
 
 ### Paso 0 — Precondiciones y datos a anotar
 
@@ -252,12 +254,12 @@ git fetch origin && git log --oneline HEAD..origin/main
 git pull origin main
 git log -1 --format='instalador nuevo: %h %ad %s' --date=short
 docker compose config -q && echo "compose OK"
-grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # PENDIENTE-PRIMER-RELEASE = todavía no se puede activar la extensión (Paso 6)
+grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # 2026-10-07: el Paso 6 necesita un ELEA_EXT_VERSION igual o posterior
 ls -l respaldo.sh migrar-base-motor.sh crear-super-admin.sh activar-redirect.sh docker-compose.redirect.yml proxy/Caddyfile
 ```
 
 **Verificar.** `git pull` termina sin conflictos; el último commit es el esperado; `compose OK`; los seis archivos de la última línea existen (los scripts, con permiso de ejecución).
-Si `ELEA_EXT_MIN_VERSION` sigue en `PENDIENTE-PRIMER-RELEASE`, los Pasos 3 a 5 se pueden hacer igual, pero el Paso 6 se va a negar: es lo esperado hasta que el release de las `-ext` fije esa fecha.
+`ELEA_EXT_MIN_VERSION` tiene que dar una fecha (`2026-10-07` en este instalador); si no, el instalador es anterior a T102 y el Paso 6 se va a negar (falla cerrado, sin tocar nada). Repetir este Paso 2.
 
 **Si falla**
 
@@ -285,7 +287,7 @@ En la ventana. Este primer comando **pregunta** (hay que escribir `MIGRAR`), as�
 
 ```bash
 cd ~/Eleia-cli
-./migrar-base-motor.sh                                 # escribir MIGRAR cuando lo pida
+./migrar-base-motor.sh                                 # escribir MIGRAR cuando lo pida (sin terminal pregunta nada y se niega: usar --si)
 ```
 
 Recién después, la verificación y `./install.sh`, que completa la actualización (imágenes nuevas, proxy de la API, resto de servicios):
@@ -345,7 +347,7 @@ Después, que la persona de cumplimiento entre una vez al panel y cambie la cont
 
 ### Paso 5 — Verificar sin redirección
 
-Sin corte. Este es un **buen punto para parar**: hasta acá no se tocó nada de la extensión y la instalación queda completa, separada y con proxy. Si algo de lo siguiente no da lo esperado, no seguir.
+Sin corte. Este es un **buen punto para parar**: hasta acá no se tocó nada de la extensión y la instalación queda completa, separada y con proxy. Si algo de lo siguiente no da lo esperado, no seguir. (`--verificar` compara la base del motor con la del Guardian: solo tiene sentido en una **actualización** con la separación hecha; en una instalación nueva, que nunca tuvo base compartida, termina en «No se pudo leer el motor de elea_gateway». Es lo esperado: este runbook no es para instalaciones nuevas.)
 
 ```bash
 cd ~/Eleia-cli
@@ -358,13 +360,13 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/health           
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/docs                              # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/internal/identity          # 404
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/redirect/health            # 404: la extensión todavía no está (lo esperado)
-curl -s http://localhost:8091/openapi.json | grep -o '"title":"[^"]*"' | head -1                # el título de la consola dice «Eleia GuardIAn»
+curl -s http://localhost:8091/openapi.json | grep -o '"title":"[^"]*"' | head -1                # el título de la consola dice «Eleia GuardIAn API»
 docker exec elea-db psql -U "${POSTGRES_USER:-elea_admin}" -d "${POSTGRES_DB:-elea_gateway}" -Atc 'SELECT count(*) FROM audit_logs'
 ```
 
 Desde **otra máquina de la LAN/VPN** (no el servidor): `curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/internal/identity` tiene que dar **404**.
 
-**Verificar.** Los códigos de arriba. El título de la consola (`/openapi.json`) dice **«Eleia GuardIAn»** (lo fija `BRAND_NAME` en `docker-compose.yml`; no debería verse el default de fábrica del backend). Además, prueba funcional a mano con **una pregunta real por cada servicio** (Hub: chat con documentos, planillas, presentación; un texto **distinto** en cada una,
+**Verificar.** Los códigos de arriba. El título de la consola (`/openapi.json`) dice **«Eleia GuardIAn API»** (lo fija `BRAND_NAME` en `docker-compose.yml`; no debería verse el default de fábrica del backend). Además, prueba funcional a mano con **una pregunta real por cada servicio** (Hub: chat con documentos, planillas, presentación; un texto **distinto** en cada una,
 porque el motor parece cachear pedidos idénticos): en cada una `audit_logs` sube en 1 (repetir el último `psql`) y `./migrar-base-motor.sh --gasto` (esperar ≥ 70 s) muestra el gasto de la llave. Como `admin`, abrir `http://<servidor>:8097/templates`.
 
 **Si falla**
@@ -378,9 +380,9 @@ porque el motor parece cachear pedidos idénticos): en cada una `audit_logs` sub
 
 ### Paso 6 — Activar `ELEA_REDIRECT=1`
 
-**Con corte corto** (el instalador recrea el motor, el backend y el panel; tiempo real `[COMPLETAR-TRAS-T102]`). **Precondiciones**: Paso 5 verde, **T102 hecha** y las imágenes `-ext` publicadas con su tag.
+**Con corte corto** (el instalador recrea el motor, el backend y el panel; medido en T102: `./install.sh` completo 96 s; el corte de `/health` se midió en el nivel 1 (apagar 53 s, volver a encender 6 s), no en la primera activación; reservar 15 minutos de margen). **Precondiciones**: Paso 5 verde y las imágenes `-ext` de `ELEA_EXT_VERSION` disponibles (publicadas, o construidas en local como en T102).
 El instalador comprueba tres condiciones y, si falta alguna, **falla cerrado sin tocar nada**: (1) el compose tiene `api-proxy` y el backend no publica puertos; (2) `ELEA_EXT_VERSION` ≥ `ELEA_EXT_MIN_VERSION`
-(hoy `PENDIENTE-PRIMER-RELEASE`: hasta que el release de las `-ext` lo fije, **no se activa**, y no hay forma de bajarlo desde `.env`); (3) `/api/v1/internal/*` da 404 por el puerto publicado.
+(hoy `2026-10-07`, fijado en `install.sh`; un valor en `.env` no lo baja); (3) `/api/v1/internal/*` da 404 por el puerto publicado.
 
 Primero, un respaldo propio **previo a la activación** y anotar cuál es (el nivel 2 del Paso 8 lo usa; el instalador toma además uno al activar):
 
@@ -390,11 +392,11 @@ cd ~/Eleia-cli
 D=$(cat ~/respaldo-previo-a-la-activacion.txt); (cd "$D" && sha256sum -c SHA256SUMS)
 ```
 
-Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque se niega mientras el tag sea el marcador:
+Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque se niega si el tag no tiene el formato AAAA-MM-DD:
 
 ```bash
 cd ~/Eleia-cli
-ELEA_EXT_VERSION='<TAG-A-COMPLETAR-TRAS-T102>'         # reemplazar por el tag publicado de las imágenes -ext (AAAA-MM-DD)
+ELEA_EXT_VERSION='2026-10-07'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-07)
 if [[ "$ELEA_EXT_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   [ -z "$(tail -c1 .env)" ] || echo >> .env
   sed -i '/^ELEA_REDIRECT=/d;/^ELEA_EXT_VERSION=/d' .env
@@ -416,13 +418,30 @@ cd ~/Eleia-cli
 set -a; source .env; set +a
 docker inspect --format '{{.Name}} {{.Config.Image}}' elea-engine elea-backend elea-frontend     # las tres terminan en «-ext» (el tag de arriba)
 ls -l "$EXTRA_ENV_FILE"                                                                           # -rw------- (600), fuera de ~/Eleia-cli; NO mostrar su contenido
-docker compose exec -T backend alembic current                                                    # dos revisiones: la de siempre y la de la extensión (según el quickstart de la 057; no verificado en vivo)
+docker compose exec -T backend alembic current                                                    # dos revisiones, las dos «(head)»: la de siempre y la de la extensión (verificado en T102)
 curl -s -w '\n%{http_code}\n' http://localhost:8091/api/v1/redirect/health                        # 200
 ./migrar-base-motor.sh --verificar                                                                # el libro de migraciones del motor no cambió
 ```
 
 Si se fijó el digest de las `-ext` (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE` en `.env`, de la línea `PINNED …` que imprime `publish-elea.sh`), `docker inspect` muestra esa referencia en lugar del tag.
-Falta, en el panel («Modelos»): publicar los modelos, completar por destino la **jurisdicción de inferencia** y la **entidad responsable** (sin jurisdicción de inferencia el destino se rechaza) y crear una llave por persona. El instalador no hace nada de eso.
+**Falta, en el panel** (`http://<servidor>:8090`, «Modelos»), y **lo hace el usuario de cumplimiento** (`super_admin`, Paso 4), no el `admin` de la empresa: los destinos de la instalación (el instalador siembra cuatro de Azure) solo los ve ese
+usuario hasta que los **ofrece** a la organización (con el `admin` la lista aparece vacía: es lo esperado, no un error). Por cada destino, en la pestaña «Modelos»:
+
+| Dónde | Campo | Qué poner |
+|---|---|---|
+| «Editar» | «Dirección base» | la dirección del recurso de Azure (la misma de `AZURE_OPENAI_ENDPOINT` de `.env`) |
+| «Ficha» | «Jurisdicción de inferencia» | la región real del recurso de Azure (sin ella el destino se rechaza) |
+| «Ficha» | «Entidad responsable», «Jurisdicción de la entidad», «Jurisdicción de control» | quién opera la inferencia y dónde; sin la de control el modelo no cuenta «en región» |
+| «Verificar despliegue» | — | comprueba que el nombre del despliegue exista en el recurso; si no, la entrada queda inactiva con el motivo |
+| «Ofrecer» | — | lo pone a disposición de la organización; después, en «Routing» → «Redirección» → «Modelos publicados», se publica con su id y se crea **una llave por persona** |
+
+La **credencial de Azure** la usa el motor desde `.env` (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_API_VERSION`); la entrada sembrada solo la referencia. Después de cambiarla en `.env`, recrear lo que la lee
+(`restart` **no** relee `.env`):
+
+```bash
+cd ~/Eleia-cli
+docker compose up -d engine backend                    # recrea con el .env nuevo; conserva las imágenes -ext (COMPOSE_FILE ya está en .env)
+```
 
 **Variables opcionales del enmascarado (no hace falta tocarlas).** La 057 agregó estas variables; **todas tienen un valor por defecto seguro** y el instalador **no las escribe**: rige el default.
 Llegan al motor y al backend por el mismo archivo de entorno de la extensión (`redirect.env`; `EXTRA_ENV_FILE`), y ni el compose ni el instalador definen ninguna, así que lo que se agregue ahí **no se pisa** (lo comprueba `bash tests/test-redirect-optin.sh`).
@@ -461,7 +480,7 @@ docker compose up -d --force-recreate engine backend
 
 ### Paso 7 — Verificar con redirección
 
-Sin corte. Hay tres comprobaciones (a, b y c); **todas** tienen que cumplirse, y si una no, nivel 1 del Paso 8.
+Sin corte. Hay cuatro comprobaciones (a, b, c y d); **todas** tienen que cumplirse, y si una no, nivel 1 del Paso 8.
 
 **a) En el servidor** (el puerto publicado es el del proxy, 8091):
 
@@ -492,8 +511,10 @@ Pedirle algo que incluya datos **inventados** (nunca los de una persona real), p
 
 * **Qué se espera.** El dato personal **sale enmascarado** hacia el modelo (seudonimización reversible: el modelo recibe un marcador, no el valor) y **vuelve restaurado** a la persona: la respuesta se lee normal. Que el enmascarado se aplicó se ve en la **auditoría**, que
   guarda **solo metadatos** (jamás el texto del pedido ni el dato): el id pedido y el destino real, la postura (`default_posture_applied`, `masked_all` por defecto), si el destino estaba en región y el alcance del enmascarado (`masking_scope`).
-  Se mira en el panel (`http://<servidor>:8090`, pantalla de auditoría; nombre exacto `[COMPLETAR-TRAS-T102]`). Con la postura por defecto (`masked_all`) todo lo redirigido sale enmascarado, sea cual sea el destino.
+  Se mira en el panel (`http://<servidor>:8090`, pantalla «Logs de Auditoría»; esa pantalla existe, pero qué columnas muestra de un pedido redirigido —postura, alcance— **no se verificó**: sin la credencial de Azure no hubo pedidos redirigidos en T102; si no aparecen ahí, están en la tabla `audit_logs`). Con la postura por defecto (`masked_all`) todo lo redirigido sale enmascarado, sea cual sea el destino.
 * Anotar **sin contenido** (fecha, id del modelo, destino, postura, `masking_scope`) como evidencia; no copiar el prompt ni la respuesta.
+
+**d) En el panel** (verificado en T102): entrar al panel (se probó con un usuario `admin` de la organización), «Modelos» → «Routing» → «Redirección» muestra las pestañas Destinos, Modelos publicados, Reglas, Política, Residencia, Vista previa, Kits, Fidelidad y Costos.
 
 **Verificar.** (a) la salud en 200, los modelos publicados listados y `--verificar` en `OK`; (b) el plano interno en 404 desde otra máquina; (c) la conversación responde con el dato restaurado y la auditoría muestra la postura y el alcance del enmascarado, sin contenido.
 
@@ -531,7 +552,7 @@ sed -i '/^ELEA_REDIRECT=/d' .env
 `ALEMBIC_EXTRA_VERSION_LOCATIONS`: con las migraciones ya aplicadas, la imagen base no arranca (el `upgrade head` falla por revisiones desconocidas).
 
 **Verificar.** `/api/v1/redirect/health` pasa a **404** (lo esperado: las rutas de la extensión desaparecen); `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/health` da 200; `/api/v1/gw/v1/models` y una pregunta del Hub responden como antes;
-`./migrar-base-motor.sh --verificar` da `OK`. Para volver a encender: poner otra vez `ELEA_REDIRECT=1` (Paso 6).
+`./migrar-base-motor.sh --verificar` da `OK`. Para volver a encender: poner otra vez `ELEA_REDIRECT=1` (Paso 6). Medido en T102: apagar, `./install.sh` 78 s con `/health` caído 53 s; volver a encender, 83 s con `/health` caído 6 s; con las migraciones ya aplicadas y las imágenes `-ext` en su lugar.
 
 **Si falla.** `./install.sh` dice `Falta el archivo de entorno de la extensión`: el archivo de `EXTRA_ENV_FILE` no está; no inventarlo, ir al nivel 2. Si el backend no arranca después de apagar: `./elea-logs.sh backend` y, si no se resuelve, nivel 2.
 
@@ -908,16 +929,13 @@ con los modelos de Azure de Elea que Cumplimiento publica en el panel («Modelos
   carga el backend solo al arrancar; el catálogo de ejemplo de Azure lo siembra el instalador **una vez**. En el panel hay que
   completar, por destino, la jurisdicción de inferencia y la entidad responsable: sin jurisdicción de inferencia el destino se rechaza.
 
-> **Estado de la verificación.** Este procedimiento se probó con un Docker simulado (`bash tests/test-redirect-optin.sh`,
-> `bash tests/test-runbook-redirect.sh`) y con `docker compose config -q`. **No se probó con contenedores reales**: la prueba local del
-> instalador con `ELEA_REDIRECT=1` (Claude Desktop y Claude Code contra la pasarela local, Azure de destino) está pendiente, y tiene que
-> hacerse **antes** de usar este runbook en el servidor. Tampoco se probó la vuelta atrás (nivel 2) con contenedores.
+> **Estado de la verificación.** Este procedimiento se probó con un Docker simulado (`bash tests/test-redirect-optin.sh`, `bash tests/test-runbook-redirect.sh`), con `docker compose config -q` y,
+> en T102 (7-oct-2026), con **contenedores reales**: activación con `ELEA_REDIRECT=1`, salud 200, plano interno 404 (desde el servidor y desde la IP de la LAN), consola y «Routing» → «Redirección», y el
+> nivel 1 de la vuelta atrás (`EVIDENCIA-T102.md`). **No se probó con contenedores** el nivel 2 ni una conversación con un destino Azure (falta la credencial del owner).
 >
-> **Tag mínimo pendiente.** El instalador solo activa la extensión con una `ELEA_EXT_VERSION` igual o posterior a `ELEA_EXT_MIN_VERSION`,
-> la fecha del primer backend publicado que trae el chequeo de origen del canal interno. Hoy esa constante (en `install.sh`) vale
-> `PENDIENTE-PRIMER-RELEASE`: todavía no se publicó ninguna imagen con ese chequeo, y **`ELEA_REDIRECT=1` falla cerrado** con un
-> mensaje que lo explica. El release que publica las imágenes `-ext` reemplaza ese valor por la fecha de su publicación (AAAA-MM-DD),
-> por PR, en `install.sh`. Un valor puesto en `.env` no la baja.
+> **Tag mínimo.** El instalador solo activa la extensión con una `ELEA_EXT_VERSION` igual o posterior a `ELEA_EXT_MIN_VERSION`, la fecha del primer juego de imágenes que trae el chequeo de origen
+> del canal interno. Hoy esa constante (en `install.sh`) vale `2026-10-07`: el candidato construido en T102, **todavía no publicado** (ver «Imágenes del candidato» en el runbook). Con una fecha anterior,
+> o sin `ELEA_EXT_VERSION`, **`ELEA_REDIRECT=1` falla cerrado** con un mensaje que lo explica. Un valor puesto en `.env` no la baja.
 
 > **Servidor de Elea (consola web por VPN):** el orden completo y con guardas para pegar —respaldo, separar la base del motor, usuario de cumplimiento, verificación sin redirección, activar,
 > verificar y los dos niveles de vuelta atrás— está en «Actualizar el servidor de Elea (057 + bases separadas)». Esta sección es la referencia de la extensión.

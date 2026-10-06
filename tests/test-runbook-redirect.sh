@@ -39,8 +39,8 @@ chequear "activa con ELEA_REDIRECT=1" tiene 'ELEA_REDIRECT=1'
 chequear "pide ELEA_EXT_VERSION (la versión publicada con las imágenes -ext)" tiene 'ELEA_EXT_VERSION'
 chequear "corre ./install.sh para activar" tiene './install.sh'
 chequear "explica que sin ELEA_REDIRECT no cambia nada" bash -c 'grep -qiE "sin .?ELEA_REDIRECT" "$1" && grep -qiE "ni un byte|no cambia" "$1"' _ "$SEC"
-chequear "explica el tag mínimo pendiente (ELEA_EXT_MIN_VERSION = PENDIENTE-PRIMER-RELEASE) y quién lo fija" \
-  bash -c 'grep -q "ELEA_EXT_MIN_VERSION" "$1" && grep -q "PENDIENTE-PRIMER-RELEASE" "$1" && grep -qi "release" "$1"' _ "$SEC"
+chequear "explica el tag mínimo (ELEA_EXT_MIN_VERSION, fecha fijada en install.sh) y que ya no es el centinela" \
+  bash -c 'grep -q "ELEA_EXT_MIN_VERSION" "$1" && ! grep -q "PENDIENTE-PRIMER-RELEASE" "$1" && grep -qi "release" "$1"' _ "$SEC"
 chequear "dice que el motor -ext se fija por digest (ENGINE_EXT_IMAGE) y se verifica el libro de migraciones del motor" bash -c 'grep -q "ENGINE_EXT_IMAGE" "$1" && grep -q "migrar-base-motor.sh --verificar" "$1"' _ "$SEC"
 chequear "dice dónde queda el entorno de la extensión (fuera del repo, modo 600) sin mostrar secretos" bash -c 'grep -q "redirect.env" "$1" && grep -q "600" "$1" && grep -qi "fuera del repo" "$1"' _ "$SEC"
 
@@ -73,7 +73,7 @@ chequear "nivel 2: dice que NO hay vuelta atrás sin el respaldo (el rollback co
 chequear "nivel 2: toma un respaldo del estado actual antes de restaurar" bash -c 'grep -q "respaldo.sh" "$1"' _ "$SEC.n2"
 
 echo "— honestidad de la verificación"
-chequear "dice qué NO se probó con contenedores reales (prueba local T102 pendiente)" bash -c 'grep -qiE "no se prob" "$1" && grep -qiE "contenedores reales" "$1"' _ "$SEC"
+chequear "dice qué se probó con contenedores reales (T102) y qué NO (nivel 2, conversación con el modelo)" bash -c 'grep -qiE "no se prob" "$1" && grep -qiE "contenedores reales" "$1" && grep -q "T102" "$1"' _ "$SEC"
 
 echo "— los comandos del runbook existen y tienen sintaxis válida"
 awk '/^```bash$/{b=1;n++;next} /^```$/{b=0;next} b{print > ("'"$SEC"'.bloque" n)}' "$SEC"

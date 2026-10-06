@@ -73,12 +73,14 @@ chequear "Paso 5: verifica sin redirección: salud, /docs, internal 404 y que /a
   grep -q "/health" "$1" && grep -q "/docs" "$1" && grep -q "/api/v1/internal/" "$1" && grep -q "/api/v1/redirect/health" "$1" && grep -q "404" "$1"' _ "$T/paso5"
 chequear "Paso 5: dice que es un punto donde se puede parar (la instalación queda completa sin redirección)" bash -c 'grep -qi "punto.*parar\|parar acá\|podés parar" "$1"' _ "$T/paso5"
 chequear "Paso 6: respaldo antes de activar y anotar cuál es el previo a la activación" bash -c 'grep -q "^./respaldo.sh" "$1" && grep -q ".ultimo-respaldo" "$1"' _ "$T/paso6.bloques"
-chequear "Paso 6: el tag es el marcador explícito <TAG-A-COMPLETAR-TRAS-T102> (no un tag inventado)" grep -q "<TAG-A-COMPLETAR-TRAS-T102>" "$T/paso6.bloques"
-chequear_no "el runbook no inventa ningún tag: ninguna fecha AAAA-MM-DD concreta asignada a ELEA_EXT_VERSION" grep -Eq "ELEA_EXT_VERSION=['\"]?[0-9]{4}-[0-9]{2}-[0-9]{2}" "$SEC"
+MIN=$(sed -n 's/^ELEA_EXT_MIN_VERSION="\([0-9-]*\)".*/\1/p' "$AQUI/install.sh" | head -n1)
+chequear "install.sh trae una fecha AAAA-MM-DD como mínimo (ya no el centinela)" bash -c '[[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]' _ "$MIN"
+chequear "Paso 6: el tag es el del juego de imágenes probado en T102 y coincide con el mínimo de install.sh" grep -q "^ELEA_EXT_VERSION='$MIN'" "$T/paso6.bloques"
+chequear_no "no queda ningún marcador sin completar (<TAG-A-COMPLETAR-TRAS-T102> / [COMPLETAR-TRAS-T102] / PENDIENTE-PRIMER-RELEASE)" grep -Eq "TAG-A-COMPLETAR|COMPLETAR-TRAS-T102|PENDIENTE-PRIMER-RELEASE" "$SEC"
 chequear "Paso 6: no activa con el marcador puesto (valida AAAA-MM-DD antes de escribir ELEA_REDIRECT=1 en .env)" bash -c '
   b="$1"; grep -q "=~" "$b" && [ "$(grep -n "=~" "$b" | head -1 | cut -d: -f1)" -lt "$(grep -n "ELEA_REDIRECT=1" "$b" | head -1 | cut -d: -f1)" ] && grep -q "^if " "$b" && grep -q "^fi" "$b"' _ "$T/paso6.bloques"
 chequear "Paso 6: activa con ./install.sh (activar-redirect.sh solo no conoce el tag mínimo)" bash -c 'grep -q "./install.sh" "$1" && ! grep -q "^ *./activar-redirect.sh" "$1"' _ "$T/paso6.bloques"
-chequear "Paso 6: explica el tag mínimo (ELEA_EXT_MIN_VERSION, PENDIENTE-PRIMER-RELEASE) y que falla cerrado sin tocar nada" bash -c 'grep -q "ELEA_EXT_MIN_VERSION" "$1" && grep -q "PENDIENTE-PRIMER-RELEASE" "$1" && grep -qi "falla cerrado" "$1"' _ "$T/paso6"
+chequear "Paso 6: explica el tag mínimo (ELEA_EXT_MIN_VERSION) y que falla cerrado sin tocar nada" bash -c 'grep -q "ELEA_EXT_MIN_VERSION" "$1" && grep -qi "falla cerrado" "$1"' _ "$T/paso6"
 chequear "Paso 6: imágenes -ext (docker inspect) y modo 600 del entorno de la extensión" bash -c 'grep -q "\-ext" "$1" && grep -q "redirect.env" "$1" && grep -q "600" "$1"' _ "$T/paso6"
 chequear "Paso 6: las variables opcionales del enmascarado (no hace falta tocarlas) y cómo cambiarlas" bash -c 'grep -q "force-recreate" "$1" && grep -q "redirect.env" "$1"' _ "$T/paso6"
 chequear "Paso 7: /api/v1/redirect/health 200" bash -c 'grep -q "/api/v1/redirect/health" "$1" && grep -q "200" "$1"' _ "$T/paso7.bloques"
@@ -164,7 +166,9 @@ chequear "aclara que S14_EXEMPT_POSITIONS no es una variable (es una tabla del c
 
 echo "— honestidad, secretos y marca"
 chequear "dice qué NO se probó con contenedores reales y que la prueba local T102 es previa" bash -c 'grep -qiE "no se prob" "$1" && grep -qi "contenedores reales" "$1" && grep -q "T102" "$1"' _ "$SEC"
-chequear "lista los marcadores a completar tras T102" bash -c 'grep -q "<TAG-A-COMPLETAR-TRAS-T102>" "$1" && grep -q "ELEA_EXT_MIN_VERSION" "$1" && grep -qi "marcadores" "$1"' _ "$SEC"
+chequear "apunta al archivo de evidencia de T102 y ese archivo existe" bash -c 'grep -q "EVIDENCIA-T102.md" "$1" && [ -s "$2/EVIDENCIA-T102.md" ]' _ "$SEC" "$AQUI"
+chequear "dice que las imágenes -ext de ese tag están construidas pero NO publicadas todavía (publicar con VERSION=<tag>)" bash -c 'grep -qi "no publicad\|sin publicar\|no se publicaron" "$1" && grep -q "VERSION=" "$1"' _ "$SEC"
+chequear "dice en qué pantalla y con qué usuario se dan de alta los destinos (cumplimiento / super_admin, Modelos, Ficha)" bash -c 'grep -q "super_admin" "$1" && grep -q "Ficha" "$1" && grep -q "Dirección base" "$1" && grep -q "Jurisdicción de inferencia" "$1"' _ "$SEC"
 chequear "avisa que se trabaja desde la consola web por VPN" bash -c 'grep -qi "VPN" "$1" && grep -qi "consola web" "$1"' _ "$SEC"
 chequear "no trae llaves reales (sk-…, tokens largos): solo marcadores <…> y nombres de variables" bash -c '! grep -Eq "sk-[A-Za-z0-9]{10,}|(KEY|TOKEN|PASSWORD)=[A-Za-z0-9+/]{20,}" "$1"' _ "$SEC"
 chequear "no nombra internals prohibidos (litellm, berriai, presidio) ni el nombre de la extensión" bash -c '! grep -Eiq "litellm|berriai|presidio|sentinel" "$1"' _ "$SEC"

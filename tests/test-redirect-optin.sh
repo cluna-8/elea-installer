@@ -462,7 +462,7 @@ chequear "lo llama DESPUÉS de levantar todo y ANTES del cierre" bash -c '[ -n "
 chequear "si activar falla, el instalador termina con error visible (no sigue como si nada)" bash -c 'sed -n "$1p" "$2" | grep -q "|| die"' _ "$n_act" "$AQUI/install.sh"
 chequear "install.sh fija ELEA_EXT_MIN_VERSION DESPUÉS de leer el .env (el .env no puede bajarla)" bash -c '[ -n "$1" ] && [ -n "$2" ] && [ "$1" -gt "$2" ]' _ "$n_min" "$n_src"
 chequear "la exporta para ./activar-redirect.sh" grep -Eq '^export ELEA_EXT_MIN_VERSION' "$AQUI/install.sh"
-chequear "el valor entregado falla cerrado (centinela) o es una fecha AAAA-MM-DD" bash -c 'grep -Eq "^ELEA_EXT_MIN_VERSION=\"(PENDIENTE-PRIMER-RELEASE|[0-9]{4}-[0-9]{2}-[0-9]{2})\"" "$1"' _ "$AQUI/install.sh"
+chequear "el valor entregado es una fecha AAAA-MM-DD (el centinela PENDIENTE-PRIMER-RELEASE ya no se entrega)" bash -c 'grep -Eq "^ELEA_EXT_MIN_VERSION=\"[0-9]{4}-[0-9]{2}-[0-9]{2}\"" "$1"' _ "$AQUI/install.sh"
 chequear "con ELEA_REDIRECT sin definir, install.sh no cambia ninguno de los comandos de compose (sin -f ni COMPOSE_FILE)" \
   bash -c '! grep -Eq "docker compose (-f|--file)|COMPOSE_FILE" "$1"' _ "$AQUI/install.sh"
 chequear ".env.example documenta ELEA_REDIRECT y ELEA_EXT_VERSION, comentadas (apagado por defecto)" bash -c 'grep -Eq "^# ELEA_REDIRECT=1" "$1" && grep -Eq "^# ELEA_EXT_VERSION=" "$1" && ! grep -Eq "^(ELEA_REDIRECT|ELEA_EXT_VERSION)=" "$1"' _ "$AQUI/.env.example"

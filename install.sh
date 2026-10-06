@@ -56,9 +56,10 @@ set -a; source .env; set +a
 # Extensión de redirección de modelos (opt-in, ELEA_REDIRECT=1; README, «Extensión de redirección de modelos»).
 # Tag MÍNIMO (AAAA-MM-DD) del backend publicado que trae el chequeo de origen del canal interno: con una versión
 # anterior ./activar-redirect.sh no activa la extensión. Se fija ACÁ, después de leer .env, para que un valor en
-# .env no pueda bajarlo. «PENDIENTE-PRIMER-RELEASE» = todavía no hay imagen con ese chequeo: ELEA_REDIRECT=1 NO se
-# puede activar hasta que el release que la trae reemplace este valor por la fecha de su publicación.
-ELEA_EXT_MIN_VERSION="PENDIENTE-PRIMER-RELEASE"
+# .env no pueda bajarlo. 2026-10-07 = la fecha del primer juego de imágenes (base y -ext) construido desde la rama
+# final de la 057 (prueba T102); una versión publicada anterior no trae ese chequeo. «PENDIENTE-PRIMER-RELEASE»
+# (el valor anterior) hacía que ELEA_REDIRECT=1 no se pudiera activar nunca.
+ELEA_EXT_MIN_VERSION="2026-10-07"
 export ELEA_EXT_MIN_VERSION
 [ -n "${AZURE_OPENAI_API_KEY:-}" ] || die "Falta AZURE_OPENAI_API_KEY en .env — completalo y volvé a correr."
 
