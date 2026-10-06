@@ -6,6 +6,18 @@ Fecha: 2026-10-06 · Rama del instalador `cluna-8/fix-separar-bases-motor` (HEAD
 **Veredicto:** las tres fases pasan con contenedores reales. El ensayo encontró **4 fallas del procedimiento o de
 la documentación** (sección 6) y **1 hallazgo de seguridad** (sección 5). Ninguna se arregló en esta tarea.
 
+## Seguimiento de los puntos abiertos (rama `cluna-8/fix-separar-bases-motor-2`, 2026-10-06)
+
+El resto de este documento es el registro del ensayo y **no se reescribe**; acá queda el estado de cada punto.
+
+| Punto | Estado | Dónde |
+|---|---|---|
+| §5 `/api/v1/internal/*` alcanzable por `8091` | **Cerrado en el instalador, solo con pruebas sin Docker.** El backend ya no publica puertos; `api-proxy` (Caddy fijado por digest) publica `8091` y responde 404 a todo camino con un segmento `internal` (con o sin secreto, mayúsculas, `//`, `..`, letras codificadas); lo demás pasa. `INTERNAL_ALLOWED_CIDRS=auto` en el backend (la capa de origen la implementa el backend, no este repo). | `docker-compose.yml` (`api-proxy`, `backend`), `proxy/Caddyfile`, `tests/test-proxy.sh` (corre un Caddy real contra un backend de mentira si hay binario), README «Proxy de la API». **No se levantó el compose ni se repitió el §5 con contenedores**: queda para el ensayo con Docker. |
+| 6.1 «volver a separar» no funcionaba | **Arreglado.** `./migrar-base-motor.sh --volver-a-separar` (pide `SEPARAR`); el comando pelado en ese estado se niega con un mensaje verdadero; la vuelta B anota la base que se separó; la base vieja se renombra, no se borra. | `migrar-base-motor.sh`, `tests/test-base-motor.sh` («volver a separar…»: el comando sale del texto del propio script y se ejecuta de punta a punta contra el Docker simulado), README. Sin ensayo con contenedores reales. |
+| 6.2 el gate de `elea` cuelga sin Postgres | **Abierto, fuera de este repo** (`tests/migration_harness.py`, gate de `elea`). | repo `elea` |
+| 6.3 `make docs-refs` ensucia `openapi.json` | **Abierto, fuera de este repo** (`deploy/Makefile`). | repo `elea` |
+| 6.4 el motor cachea pedidos idénticos | **Documentado**: la prueba funcional del README pide un texto distinto por pregunta. No es un cambio de comportamiento. | README, «Prueba funcional» |
+
 ## 0. Cómo se hizo (y qué NO es idéntico a una instalación completa)
 
 - Proyecto Compose aislado `ensayobases` (volumen `ensayobases_pgdata`, redes `ensayobases_*`), carpetas

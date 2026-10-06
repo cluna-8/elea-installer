@@ -96,9 +96,19 @@ for i in $(seq 1 60); do
   [ "$i" -eq 60 ] && die "El motor no terminó de arrancar después de 5 minutos. Revisá: ./elea-logs.sh engine"
 done
 
-log "Levantando el Guardian (backend + panel)"
-docker compose pull backend frontend 2>&1 | grep -v "^ " || true
-docker compose up -d backend frontend
+# El puerto 8091 lo publica el proxy (api-proxy), no el backend: el proxy niega /api/v1/internal/*.
+# Si OTRO proceso lo tiene ocupado el proxy no arranca: mejor decirlo antes que esperar 3 minutos.
+# (Si ya corren el backend o el proxy de este instalador, el 8091 es nuestro: compose lo reasigna solo.)
+if command -v ss >/dev/null && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '[:.]8091$' \
+   && [ -z "$(docker ps -q -f name=^/elea-backend$ -f name=^/elea-api-proxy$)" ]; then
+  die "El puerto 8091 ya lo usa otro proceso (no es este instalador): liberalo y volvé a correr. Ver: ss -ltnp | grep 8091"
+fi
+
+log "Levantando el Guardian (backend + proxy de la API + panel)"
+docker compose pull backend api-proxy frontend 2>&1 | grep -v "^ " || true
+# Juntos y en una sola orden: al actualizar una instalación vieja, el backend viejo todavía publica
+# el 8091; compose lo recrea sin puerto ANTES de arrancar el proxy (que depende de él) y lo toma.
+docker compose up -d backend api-proxy frontend
 
 log "Esperando a que el Guardian esté listo (puede tardar el primer arranque)"
 for i in $(seq 1 60); do

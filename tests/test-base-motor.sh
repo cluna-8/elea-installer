@@ -105,6 +105,84 @@ nuevo_entorno; export FAKE_GW_MOTOR=0
 out=$(cd "$T" && ./migrar-base-motor.sh --vuelta-atras --si 2>&1); rc=$?
 chequear "sin tablas viejas no hay a dónde volver (vuelta C)" bash -c '[ "$1" != 0 ] && grep -q "Vuelta C" <<<"$2"' _ "$rc" "$out"
 
+echo "— volver a separar tras la vuelta B (ensayo 06-oct, falla 6.1)"
+# Estado de partida: la vuelta B ya se hizo (ENGINE_DB = la del Guardian, URL vacías) y elea_engine quedó con sus tablas.
+despues_de_vuelta_b() {
+  nuevo_entorno; export FAKE_DBS="postgres elea_gateway elea_engine" FAKE_ENG_MOTOR=66 FAKE_MARKER="separada-de:elea_gateway:2026-10-06"
+  mkdir -p "$T/.migracion-motor"; echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:viejo" > "$T/.migracion-motor/imagen-anterior"
+  TEXTO_VUELTA=$(cd "$T" && ./migrar-base-motor.sh --vuelta-atras --si 2>&1)
+}
+despues_de_vuelta_b
+chequear "la vuelta B deja .env con ENGINE_DB=elea_gateway" grep -q '^ENGINE_DB=elea_gateway$' "$T/.env"
+chequear "la vuelta B anota cuál era la base separada" grep -qx 'elea_engine' "$T/.migracion-motor/base-motor-separada"
+out=$(cd "$T" && ./migrar-base-motor.sh --vuelta-atras --si 2>&1); rc=$?
+chequear "una segunda vuelta B se niega (ya está en la base compartida)" bash -c '[ "$1" != 0 ]' _ "$rc"
+chequear "…y no pisa la base anotada" grep -qx 'elea_engine' "$T/.migracion-motor/base-motor-separada"
+despues_de_vuelta_b
+chequear "el cierre de la vuelta B recomienda --volver-a-separar" grep -q './migrar-base-motor.sh --volver-a-separar' <<<"$TEXTO_VUELTA"
+
+echo "  sin la opción, el comando pelado ya no miente"
+despues_de_vuelta_b; : > "$FAKE_LOG"
+out=$(cd "$T" && ./migrar-base-motor.sh --si --espera-gasto 0 2>&1); rc=$?
+chequear "no dice que la base ya está separada" bash -c '! grep -q "ya está separada" <<<"$1"' _ "$out"
+chequear "termina con error (no con 0)" bash -c '[ "$1" != 0 ]' _ "$rc"
+chequear "apunta al comando que sí funciona" grep -q -- '--volver-a-separar' <<<"$out"
+chequear "no tocó nada (ni .env ni Docker)" bash -c '! grep -q "compose up -d engine" "$1" && grep -q "^ENGINE_DB=elea_gateway$" "$2/.env"' _ "$FAKE_LOG" "$T"
+
+echo "  el comando que recomienda el script"
+despues_de_vuelta_b
+# El comando se saca del TEXTO que imprime el script al terminar la vuelta B (no se escribe a mano acá).
+recomendado=$(grep -o '\./migrar-base-motor\.sh --volver-a-separar' <<<"$TEXTO_VUELTA" | head -n1)
+chequear "el script recomienda un comando concreto" [ -n "$recomendado" ]
+: > "$FAKE_LOG"; : > "$FAKE_LOG.sql"
+out=$(cd "$T" && ${recomendado} --si --espera-gasto 0 2>&1); rc=$?
+chequear "funciona (termina bien)" [ "$rc" = 0 ]
+chequear ".env: ENGINE_DB=elea_engine otra vez" grep -q '^ENGINE_DB=elea_engine$' "$T/.env"
+chequear ".env: ya no hay URL vacías de identidad/auditoría (vuelven al valor por HTTP del compose)" bash -c '! grep -q "^ENGINE_IDENTITY_URL=" "$1/.env" && ! grep -q "^ENGINE_AUDIT_URL=" "$1/.env"' _ "$T"
+chequear ".env: se quita la imagen de la vuelta B (vuelve a la fijada por digest)" bash -c '! grep -q "^ENGINE_IMAGE=" "$1/.env"' _ "$T"
+chequear "la base vieja se RENOMBRA (no se borra)" grep -Eq 'ALTER DATABASE "elea_engine" RENAME TO "elea_engine_vieja_[0-9]{14}"' "$FAKE_LOG.sql"
+chequear "nunca se borra una base ni una tabla" bash -c '! grep -Eqi "drop (database|table)" "$1"' _ "$FAKE_LOG.sql"
+chequear "se renombra la vieja ANTES de crear la nueva" bash -c 'a=$(grep -n "ALTER DATABASE" "$1" | head -n1 | cut -d: -f1); b=$(grep -n "CREATE DATABASE" "$1" | head -n1 | cut -d: -f1); [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]' _ "$FAKE_LOG.sql"
+chequear "copia solo las tablas del motor (-T) y pasa por la compuerta" bash -c 'grep -q "TLIST=alembic_version users audit_logs" "$1" && grep -q "COMPUERTA OK" <<<"$2"' _ "$FAKE_LOG" "$out"
+chequear "recrea el motor y levanta los clientes después" antes 'compose up -d engine' 'compose up -d client'
+chequear "marca la base nueva como separada" grep -q "COMMENT ON DATABASE \"elea_engine\"" "$FAKE_LOG.sql"
+chequear "avisa dónde quedó la base vieja" grep -q 'elea_engine_vieja_' <<<"$out"
+chequear "la llave de servicio no se imprime" bash -c '! grep -q sk-secreta-123 <<<"$1"' _ "$out"
+cp "$T/.env" "$T/.env.tras-separar"
+out=$(cd "$T" && ./migrar-base-motor.sh --detectar 2>&1); rc=$?
+chequear "idempotente: ahora --detectar dice «no hace falta» (3)" [ "$rc" = 3 ]
+
+echo "  usa la base anotada por la vuelta B (aunque no se llame elea_engine)"
+nuevo_entorno; sed -i 's/^ENGINE_DB=.*/ENGINE_DB=elea_gateway/' "$T/.env"; export FAKE_DBS="postgres elea_gateway mi_motor"
+mkdir -p "$T/.migracion-motor"; echo mi_motor > "$T/.migracion-motor/base-motor-separada"
+out=$(cd "$T" && ./migrar-base-motor.sh --volver-a-separar --dry-run 2>&1); rc=$?
+chequear "dry-run termina bien y habla de mi_motor" bash -c '[ "$1" = 0 ] && grep -q "Base nueva motor  : mi_motor" <<<"$2"' _ "$rc" "$out"
+chequear "dry-run explica el renombrado" grep -q 'RENAME TO' <<<"$out"
+chequear "dry-run no tocó el .env ni llamó a Docker" bash -c 'grep -q "^ENGINE_DB=elea_gateway$" "$1/.env" && [ ! -s "$2" ]' _ "$T" "$FAKE_LOG"
+echo "  sin la nota de la vuelta B usa elea_engine (default)"
+nuevo_entorno; sed -i 's/^ENGINE_DB=.*/ENGINE_DB=elea_gateway/' "$T/.env"
+out=$(cd "$T" && ./migrar-base-motor.sh --volver-a-separar --dry-run 2>&1)
+chequear "habla de elea_engine" grep -q 'Base nueva motor  : elea_engine' <<<"$out"
+echo "  precondiciones"
+nuevo_entorno
+out=$(cd "$T" && ./migrar-base-motor.sh --volver-a-separar --si 2>&1); rc=$?
+chequear "si el motor YA está separado (ENGINE_DB distinta) se niega y dice por qué" bash -c '[ "$1" != 0 ] && grep -q "no hay vuelta atrás activa" <<<"$2"' _ "$rc" "$out"
+nuevo_entorno; sed -i 's/^ENGINE_DB=.*/ENGINE_DB=elea_gateway/' "$T/.env"; export FAKE_GW_MOTOR=0
+out=$(cd "$T" && ./migrar-base-motor.sh --volver-a-separar --si --espera-gasto 0 2>&1); rc=$?
+chequear "sin tablas del motor en la base del Guardian no hay qué copiar: se niega" bash -c '[ "$1" != 0 ]' _ "$rc"
+nuevo_entorno; sed -i 's/^ENGINE_DB=.*/ENGINE_DB=elea_gateway/' "$T/.env"; mkdir -p "$T/.migracion-motor"; echo 'x; DROP DATABASE postgres' > "$T/.migracion-motor/base-motor-separada"
+out=$(cd "$T" && ./migrar-base-motor.sh --volver-a-separar --si --espera-gasto 0 2>&1); rc=$?
+chequear "una nota con un nombre inválido se rechaza (no se interpola en SQL)" bash -c '[ "$1" != 0 ] && ! grep -qi "drop database" "$2.sql" 2>/dev/null' _ "$rc" "$FAKE_LOG"
+
+echo "  falla la copia al volver a separar: se deshace todo (la base vieja vuelve a su nombre)"
+despues_de_vuelta_b; export FAKE_DUMP_RC=1; : > "$FAKE_LOG.sql"
+out=$(cd "$T" && ./migrar-base-motor.sh --volver-a-separar --si --espera-gasto 0 2>&1); rc=$?
+chequear "termina con error" [ "$rc" != 0 ]
+chequear "descarta la base nueva" grep -q 'DROP DATABASE IF EXISTS "elea_engine"' "$FAKE_LOG.sql"
+chequear "devuelve a la vieja su nombre" grep -Eq 'ALTER DATABASE "elea_engine_vieja_[0-9]{14}" RENAME TO "elea_engine"' "$FAKE_LOG.sql"
+chequear "el renombrado de vuelta es DESPUÉS del descarte" bash -c 'a=$(grep -n "DROP DATABASE IF EXISTS" "$1" | head -n1 | cut -d: -f1); b=$(grep -n "RENAME TO \"elea_engine\"" "$1" | head -n1 | cut -d: -f1); [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]' _ "$FAKE_LOG.sql"
+chequear ".env sin tocar (sigue en la base compartida)" grep -q '^ENGINE_DB=elea_gateway$' "$T/.env"
+
 echo "— --mostrar-limpieza (solo imprime) y --gasto"
 nuevo_entorno
 out=$(cd "$T" && ./migrar-base-motor.sh --mostrar-limpieza 2>&1); rc=$?

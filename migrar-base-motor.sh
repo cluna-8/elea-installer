@@ -8,8 +8,8 @@
 # puede tocar tablas del motor.
 #
 # Qué hace (el procedimiento se ensayó A MANO con Docker el 06-oct-2026, con la corrección `pg_dump -T`,
-# no `-t`; este script lo automatiza y se probó contra un Docker simulado: tests/test-base-motor.sh.
-# Falta su ensayo de punta a punta contra contenedores reales):
+# no `-t`; este script lo automatiza, se probó contra un Docker simulado (tests/test-base-motor.sh) y de
+# punta a punta con contenedores reales el mismo día: ENSAYO-SEPARAR-BASES.md):
 #   Previa (sin corte)  baja la imagen fijada · anota la imagen en marcha · copia completa de las dos
 #                       bases · comprueba que el libro de migraciones esté completo
 #   Corte (≈ 1 min)    para clientes y motor · crea la base nueva · copia SOLO las tablas del motor
@@ -23,6 +23,8 @@
 #   ./migrar-base-motor.sh --detectar       ¿hace falta? código 0 = sí (base compartida), 3 = no, 4 = estado ambiguo
 #   ./migrar-base-motor.sh --verificar      compuerta de integridad entre las dos bases + llaves (solo lectura)
 #   ./migrar-base-motor.sh --vuelta-atras   opción B: el motor vuelve a leer la base compartida
+#   ./migrar-base-motor.sh --volver-a-separar  después de una vuelta atrás B: separa otra vez (la base vieja
+#                       del motor se RENOMBRA, no se borra)
 #   ./migrar-base-motor.sh --inventario     imagen y versión del motor en marcha + tamaño de sus tablas (solo lectura)
 #   ./migrar-base-motor.sh --gasto          alias y gasto acumulado de cada llave en la base del motor
 #   ./migrar-base-motor.sh --mostrar-limpieza  IMPRIME (no ejecuta) el SQL para borrar las copias viejas (D8)
@@ -35,6 +37,8 @@ cd "$(dirname "$0")"
 source ./base-motor.lib.sh
 
 ACCION=migrar
+VOLVER=0     # 1 = --volver-a-separar (el motor está en la base compartida por una vuelta atrás B)
+VIEJA=""     # nombre al que se renombró la base vieja del motor al volver a separar (lo usa vuelta_a)
 SI=0
 ESPERA_GASTO="${ELEA_ESPERA_GASTO:-70}"
 while [ $# -gt 0 ]; do
@@ -43,12 +47,13 @@ while [ $# -gt 0 ]; do
     --detectar)     ACCION=detectar ;;
     --verificar)    ACCION=verificar ;;
     --vuelta-atras) ACCION=vuelta ;;
+    --volver-a-separar) ACCION=migrar; VOLVER=1 ;;
     --inventario)   ACCION=inventario ;;
     --gasto)        ACCION=gasto ;;
     --mostrar-limpieza) ACCION=limpieza ;;
     --si)           SI=1 ;;
     --espera-gasto) ESPERA_GASTO="${2:?--espera-gasto necesita segundos}"; shift ;;
-    -h|--help)      sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help)      sed -n '2,32p' "$0"; exit 0 ;;
     *) die "Opción desconocida: $1 (ver --help)" ;;
   esac
   shift
@@ -73,7 +78,7 @@ foto() { psql_db "$1" <<<"$FOTO_SQL"; }
 detectar() {
   if [ "$ENGINE_DB" = "$GW_DB" ]; then
     aviso "ENGINE_DB = POSTGRES_DB (${GW_DB}): el motor está sobre la base compartida (vuelta atrás activa o .env viejo)."
-    aviso "El borrado del migrador sigue siendo posible. Para volver a separar: ./migrar-base-motor.sh"
+    aviso "El borrado del migrador sigue siendo posible. Para volver a separar: ./migrar-base-motor.sh --volver-a-separar"
     return 3
   fi
   existe_db "$GW_DB" || return 3
@@ -151,8 +156,25 @@ confirmar() {
 }
 
 # ── Migrar ──────────────────────────────────────────────────────────────────────────────
+# --volver-a-separar: el motor está en la base compartida a propósito (vuelta atrás B). La base a la que
+# volver la anotó la vuelta B (${ESTADO}/base-motor-separada); sin nota, la de siempre (elea_engine).
+preparar_volver_a_separar() {
+  [ "$ENGINE_DB" = "$GW_DB" ] || die "El motor ya está sobre ${ENGINE_DB}: no hay vuelta atrás activa que revertir. Para una instalación con base compartida de origen: ./migrar-base-motor.sh"
+  local n=elea_engine
+  [ -f "${ESTADO}/base-motor-separada" ] && n=$(head -n1 "${ESTADO}/base-motor-separada")
+  [[ "$n" =~ ^[A-Za-z0-9_]+$ ]] || die "La nota ${ESTADO}/base-motor-separada no trae un nombre de base válido (solo letras, números y _): corregirla o borrarla."
+  [ "$n" != "$GW_DB" ] || die "La nota ${ESTADO}/base-motor-separada apunta a la base del Guardian (${GW_DB}): corregirla o borrarla."
+  ENGINE_DB="$n"
+}
+
 migrar() {
   grep -q 'db-engine-init' docker-compose.yml || die "Este docker-compose.yml no es el nuevo (falta db-engine-init): hacé git pull primero."
+  if [ "$VOLVER" = 1 ]; then
+    preparar_volver_a_separar
+  elif [ "$ENGINE_DB" = "$GW_DB" ]; then
+    # Antes decía «ya está separada»: falso. ENGINE_DB = POSTGRES_DB es la vuelta atrás B (o un .env viejo).
+    die "El motor está sobre la base compartida ${GW_DB} (vuelta atrás B activa o .env viejo), no separado. Para separarlo otra vez: ./migrar-base-motor.sh --volver-a-separar"
+  fi
   local pin img_actual
   if [ "$DRY" = 1 ]; then
     # --dry-run no consulta Docker: la imagen fijada sale del compose y del .env.
@@ -164,6 +186,7 @@ migrar() {
     img_actual=$(docker inspect "$ENGINE_C" --format '{{.Config.Image}}' 2>/dev/null || echo '(no hay contenedor)')
     log "Separar la base del motor"
   fi
+  [ "$VOLVER" != 1 ] || echo "  Modo: volver a separar tras la vuelta atrás B (el motor está hoy sobre ${GW_DB})"
   echo "  Base del Guardian : ${GW_DB}   (usuario ${PGU}, contenedor ${DB_C})"
   echo "  Base nueva motor  : ${ENGINE_DB}"
   echo "  Motor en marcha   : ${img_actual}"
@@ -172,18 +195,32 @@ migrar() {
 
   if [ "$DRY" != 1 ]; then
     asegurar_db
-    local rc=0
-    detectar || rc=$?
-    case "$rc" in
-      0) ;;
-      3) echo "  No hace falta migrar: la base del motor ya está separada (o no hay motor que migrar)."; return 0 ;;
-      *) die "Estado ambiguo (código ${rc}): no se migra solo. Ver README." ;;
-    esac
+    if [ "$VOLVER" = 1 ]; then
+      # Aquí el estado «ambiguo» es esperado: ENGINE_DB conserva las tablas y la marca de la separación
+      # anterior. Lo único que hace falta es que la base compartida todavía tenga las tablas del motor.
+      [ "$(n_motor "$GW_DB")" -gt 0 ] || die "No hay tablas del motor en ${GW_DB}: no hay qué copiar. El motor tendría que estar en ${ENGINE_DB} (README, vuelta C)."
+    else
+      local rc=0
+      detectar || rc=$?
+      case "$rc" in
+        0) ;;
+        3) echo "  No hace falta migrar: la base del motor ya está separada (o no hay motor que migrar)."; return 0 ;;
+        *) die "Estado ambiguo (código ${rc}): no se migra solo. Ver README." ;;
+      esac
+    fi
     [ "${img_actual#*@sha256:}" != "$img_actual" ] || [ "$img_actual" = '(no hay contenedor)' ] \
       || aviso "El motor en marcha usa una etiqueta, no un digest: se cambia a la imagen fijada al levantarlo."
     echo
     echo "  Corte estimado: ~1 min de motor parado + ${ESPERA_GASTO} s de espera de gasto (Hub, planillas y presentaciones sin servicio)."
-    confirmar MIGRAR
+    if [ "$VOLVER" = 1 ]; then
+      if existe_db "$ENGINE_DB" && [ "$(n_motor "$ENGINE_DB")" -gt 0 ]; then
+        echo "  Se pierde el gasto que el motor contó en ${ENGINE_DB} desde la separación anterior hasta la vuelta B (la vuelta B ya lo dejó fuera)."
+        echo "  La base vieja ${ENGINE_DB} se RENOMBRA (queda como ${ENGINE_DB}_vieja_<fecha>, sin borrar); borrarla es decisión de una persona."
+      fi
+      confirmar SEPARAR
+    else
+      confirmar MIGRAR
+    fi
   fi
 
   log "PREVIA (sin corte)"
@@ -234,11 +271,23 @@ migrar() {
   paso "9. Crear la base nueva ${ENGINE_DB} (solo si no existe; si existe tiene que estar sin tablas)"
   local creada=0
   if [ "$DRY" = 1 ]; then
+    [ "$VOLVER" != 1 ] || echo "  \$ (si ${ENGINE_DB} existe con tablas, de la separación anterior) psql -d postgres -c 'ALTER DATABASE \"${ENGINE_DB}\" RENAME TO \"${ENGINE_DB}_vieja_<fecha>\"'   # se conserva, no se borra"
     echo "  \$ psql -d postgres -c 'CREATE DATABASE \"${ENGINE_DB}\" OWNER \"${PGU}\"'"
   else
     if existe_db "$ENGINE_DB"; then
-      [ "$(psql_db "$ENGINE_DB" <<<"SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = 0 ] \
-        || { vuelta_a "$creada" ${PARADOS[@]+"${PARADOS[@]}"}; die "${ENGINE_DB} ya existe y tiene tablas. Si es de un intento anterior: docker exec ${DB_C} psql -U ${PGU} -d postgres -c 'DROP DATABASE \"${ENGINE_DB}\"' y reintentar."; }
+      if [ "$(psql_db "$ENGINE_DB" <<<"SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" != 0 ]; then
+        if [ "$VOLVER" = 1 ]; then
+          # Sobras de la separación anterior: se apartan (renombrando), nunca se borran.
+          VIEJA="${ENGINE_DB}_vieja_$(date +%Y%m%d%H%M%S)"
+          psql_db postgres <<<"ALTER DATABASE \"${ENGINE_DB}\" RENAME TO \"${VIEJA}\"" >/dev/null \
+            || { VIEJA=""; vuelta_a 0 ${PARADOS[@]+"${PARADOS[@]}"}; die "No se pudo apartar ${ENGINE_DB} (¿hay conexiones abiertas?)."; }
+          echo "    ${ENGINE_DB} (con tablas de la separación anterior) quedó como ${VIEJA}"
+          psql_db postgres <<<"CREATE DATABASE \"${ENGINE_DB}\" OWNER \"${PGU}\"" >/dev/null || { vuelta_a 0 ${PARADOS[@]+"${PARADOS[@]}"}; die "No se pudo crear ${ENGINE_DB}."; }
+          creada=1
+        else
+          vuelta_a "$creada" ${PARADOS[@]+"${PARADOS[@]}"}; die "${ENGINE_DB} ya existe y tiene tablas. Si es de un intento anterior: docker exec ${DB_C} psql -U ${PGU} -d postgres -c 'DROP DATABASE \"${ENGINE_DB}\"' y reintentar."
+        fi
+      fi
     else
       psql_db postgres <<<"CREATE DATABASE \"${ENGINE_DB}\" OWNER \"${PGU}\"" >/dev/null || { vuelta_a 0 ${PARADOS[@]+"${PARADOS[@]}"}; die "No se pudo crear ${ENGINE_DB}."; }
       creada=1
@@ -320,6 +369,7 @@ migrar() {
     return 0
   fi
   echo "  Listo. Motor parado ~$(( $(date +%s) - t0 )) s en total (incluye la espera de gasto)."
+  [ -z "$VIEJA" ] || echo "  La base vieja del motor quedó como ${VIEJA} (sin borrar): ver README, «Borrar las copias viejas»."
   echo
   echo "  QUEDA POR HACER (a mano, ver README):"
   echo "   • Prueba funcional con una pregunta real: planillas, presentación, chat con documentos."
@@ -336,6 +386,12 @@ vuelta_a() {
   local creada="$1"; shift
   aviso "Vuelta atrás A: se descarta la base nueva y se arrancan los contenedores viejos."
   if [ "$creada" = 1 ]; then psql_db postgres <<<"DROP DATABASE IF EXISTS \"${ENGINE_DB}\"" >/dev/null || aviso "No se pudo borrar ${ENGINE_DB}: hacerlo a mano."; fi
+  # Al volver a separar, la base vieja se había apartado con otro nombre: se le devuelve el suyo.
+  if [ -n "$VIEJA" ]; then
+    psql_db postgres <<<"ALTER DATABASE \"${VIEJA}\" RENAME TO \"${ENGINE_DB}\"" >/dev/null \
+      || aviso "No se pudo devolver su nombre a ${VIEJA}: ALTER DATABASE \"${VIEJA}\" RENAME TO \"${ENGINE_DB}\" (a mano)."
+    VIEJA=""
+  fi
   docker start "$ENGINE_C" >/dev/null || aviso "No arrancó ${ENGINE_C}: docker compose logs"
   [ $# -eq 0 ] || docker start "$@" >/dev/null || aviso "No arrancaron todos los clientes: docker compose ps"
   return 0
@@ -372,12 +428,15 @@ verificar() {
 vuelta() {
   log "Vuelta atrás B: el motor vuelve a la base compartida ${GW_DB}"
   asegurar_db
+  [ "$ENGINE_DB" != "$GW_DB" ] || die "El motor ya está sobre la base compartida ${GW_DB} (vuelta atrás B hecha). Para separarlo otra vez: ./migrar-base-motor.sh --volver-a-separar"
   [ "$(n_motor "$GW_DB")" -gt 0 ] || die "Las tablas del motor ya no están en ${GW_DB}: no hay a dónde volver. Vuelta C: restaurar la copia completa (README)."
   local anterior=""
   [ -f "${ESTADO}/imagen-anterior" ] && anterior=$(cat "${ESTADO}/imagen-anterior")
   echo "  Imagen del motor a restaurar: ${anterior:-(no hay registro: queda la fijada en el compose)}"
   echo "  Se pierde el gasto que el motor contó en ${ENGINE_DB} desde el corte."
   confirmar VOLVER
+  # Anota cuál era la base separada: `--volver-a-separar` la necesita (ENGINE_DB va a quedar igual a POSTGRES_DB).
+  mkdir -p "$ESTADO"; chmod 700 "$ESTADO"; echo "$ENGINE_DB" > "${ESTADO}/base-motor-separada"
   paso "1. .env: ENGINE_DB=${GW_DB}; identidad y auditoría por SQL (URLs vacías)${anterior:+; imagen anterior}"
   set_env ENGINE_DB "$GW_DB"; set_env ENGINE_IDENTITY_URL ""; set_env ENGINE_AUDIT_URL ""
   [ -z "$anterior" ] || set_env ENGINE_IMAGE "$anterior"
@@ -392,8 +451,9 @@ vuelta() {
   levantar_clientes
   echo
   echo "  Vuelta atrás hecha. OJO: el motor otra vez comparte base con el Guardian (riesgo de borrado)."
-  echo "  Mientras tanto no subir la imagen del motor. Para volver a separar: ./migrar-base-motor.sh"
-  echo "  (si ${ENGINE_DB} quedó con tablas: DROP DATABASE antes, con una copia a mano si hace falta)."
+  echo "  Mientras tanto no subir la imagen del motor. Para volver a separar:"
+  echo "    ./migrar-base-motor.sh --volver-a-separar"
+  echo "  (la base ${ENGINE_DB} queda con sus tablas: ese comando la aparta renombrándola, sin borrarla, y copia de nuevo)."
 }
 
 # ── Inventario previo (solo lectura): qué motor corre y cuánto pesan sus tablas ─────────────────────

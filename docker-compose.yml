@@ -125,8 +125,9 @@ services:
     image: ghcr.io/cluna-8/elea-guardian-backend:latest
     container_name: elea-backend
     command: ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"]
-    ports:
-      - "8091:8000"
+    # SIN `ports:` (capa 3 de la defensa de /api/v1/internal/*): lo único publicado hacia la LAN es el
+    # proxy `api-proxy` (8091), que niega ese plano. El motor y el Hub le hablan a `backend:8000` por
+    # la red interna. Publicar el 8000 acá reabriría la puerta que el proxy cierra.
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-elea_gateway}
       - POSTGRES_USER=${POSTGRES_USER:-elea_admin}
@@ -148,6 +149,10 @@ services:
       - NLP_ANALYZER_URL=http://nlp-analyzer:3000
       - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
       - SENTINEL_AUDIT_FAIL=open
+      # Capa 2 de la defensa de /api/v1/internal/*: el plano interno solo se atiende si el pedido llega
+      # desde la red de compose (`auto` = las subredes del contenedor, sin su puerta de enlace). Un
+      # backend que aún no trae esta variable la ignora; con ella activa el proxy sigue siendo la capa 3.
+      - INTERNAL_ALLOWED_CIDRS=auto
       # Mismo flag que `engine` (ver comentario ahí) — el backend escribe la bóveda en
       # /gw/inspect (masking de documentos RAG); el motor la lee al desenmascarar.
       - SENTINEL_PII_VAULT_ENABLED=${SENTINEL_PII_VAULT_ENABLED:-true}
@@ -162,6 +167,29 @@ services:
       timeout: 5s
       retries: 15
       start_period: 15s
+    restart: unless-stopped
+
+  # Puerta de la API para las PC de la LAN: publica 8091 (el puerto de siempre: el panel, Claude
+  # Desktop y Claude Code apuntan a él) y responde 404 a /api/v1/internal/*. Es la ÚNICA ruta del
+  # backend hacia afuera. Imagen fijada por digest, la misma que el panel de producción.
+  # Config: ./proxy/Caddyfile (solo lectura).
+  api-proxy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    container_name: elea-api-proxy
+    ports:
+      - "8091:8091"
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      backend: { condition: service_healthy }
+    networks: [elea-net]
+    healthcheck:
+      # Por el camino completo (proxy → backend): si el backend cae, el proxy se ve no sano.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     restart: unless-stopped
 
   frontend:

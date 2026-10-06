@@ -37,6 +37,10 @@ aisladas entre sí.
 | Panel del Guardian (admin, visual) | http://localhost:8090 |
 | API del Guardian (Swagger) | http://localhost:8091/docs |
 
+El puerto `8091` lo publica el **proxy de la API** (`api-proxy`), no el backend: las PC de la LAN (el panel,
+Claude Desktop y Claude Code, que apuntan a `/api/v1/gw/*`) lo usan exactamente igual que antes. Lo único que
+cambia es que el proxy responde `404` a `/api/v1/internal/*` (ver «Proxy de la API»).
+
 ## Imágenes que publica el equipo (registro `ghcr.io/cluna-8`)
 
 `elea-guardian-backend`, `elea-guardian-frontend`, `elea-guardian-engine`, `elea-guardian-nlp`,
@@ -89,7 +93,7 @@ Qué hace en ese caso, **antes de tocar nada**: hace una copia de las dos bases 
 si la instalación todavía tiene la base del motor compartida con el Guardian, la separa
 (`./migrar-base-motor.sh`, ver «Separar la base del motor»: pide escribir `MIGRAR` y tiene un corte
 corto del motor). Después, descarga las imágenes nuevas y recrea solo los contenedores cuya imagen o
-configuración cambió (los espacios, documentos y usuarios sobreviven); las cuentas `svc.*` que ya
+configuración cambió (el backend pasa a no publicar puerto y arranca el proxy `api-proxy` en el `8091`, ver «Proxy de la API») (los espacios, documentos y usuarios sobreviven); las cuentas `svc.*` que ya
 existen se reutilizan (se revoca su llave anterior y se emite una nueva, porque Guardian permite
 una sola llave activa por cuenta); crea `svc.tabular` y `svc.presenton`; reconecta AnythingLLM al
 motor; y borra el contenedor viejo de DB-GPT (`exact-analysis-engine`) que ya no existe en este
@@ -118,12 +122,52 @@ Qué hace el instalador ahora:
 | `db-engine-init` (en `docker-compose.yml`) | Servicio de un solo disparo, idempotente: crea `ENGINE_DB` si no existe. Sirve en instalación nueva y al actualizar con datos. El motor espera a que termine. |
 | `SENTINEL_IDENTITY_URL` / `SENTINEL_AUDIT_URL` del motor | Con la base separada, la identidad de las llaves y la auditoría viven en la base del Guardian: el motor las pide por HTTP interno al backend (protegido con `ENGINE_MASTER_KEY`). **Sin ellas todas las llaves darían 401** y el tráfico dejaría de auditarse: por eso se cambian juntas con la base. El backend pasa a ser dependencia del motor (si está caído, la identidad falla cerrada). |
 | `ENGINE_IMAGE` (opcional, `.env`) | Reemplaza la imagen fijada del motor. Vacío = la del `docker-compose.yml`. |
+| `api-proxy` (en `docker-compose.yml`, config en `proxy/Caddyfile`) | Proxy delante del backend: publica `8091` y responde 404 a `/api/v1/internal/*`; el backend ya no publica puertos. Ver «Proxy de la API». |
 | `./respaldo.sh` | Copia de las dos bases (ver abajo). |
 | `./migrar-base-motor.sh` | Pasa una instalación vieja (base compartida) a base propia, con vuelta atrás. |
 
-Aviso de seguridad: el puerto `8091` del backend está publicado y `/api/v1/internal/*` (identidad y
-auditoría del motor) no tiene otra protección que el secreto `ENGINE_MASTER_KEY`. No exponer `8091` fuera
-de la red de confianza; es lo que ya pasaba con el resto de la API.
+### Proxy de la API (`/api/v1/internal/*` no sale de la red de Docker)
+
+`/api/v1/internal/*` es el plano por donde el motor le pide al backend la identidad de cada llave y le
+manda la auditoría. Se protege con tres capas, en toda instalación:
+
+| Capa | Dónde | Qué hace |
+|---|---|---|
+| 1 | backend | Exige el secreto `ENGINE_MASTER_KEY` (sin él, 404). |
+| 2 | backend (`INTERNAL_ALLOWED_CIDRS=auto` en `docker-compose.yml`) | Atiende ese plano solo si el pedido llega desde la red de compose. Hace falta una imagen del backend que traiga esta capa; una que no, ignora la variable y las otras dos siguen valiendo. |
+| 3 | `api-proxy` (`proxy/Caddyfile`) | Es lo único que se publica hacia la LAN. Responde **404** a todo camino con un segmento `internal` (sin distinguir mayúsculas, con barras repetidas, `..` o letras codificadas), traiga o no el secreto, y deja pasar el resto al backend. |
+
+Antes (ensayo del 06-oct-2026, `ENSAYO-SEPARAR-BASES.md`, §5) el backend publicaba `8091` y, con la llave maestra, ese
+plano respondía desde cualquier máquina que alcanzara el puerto. Ahora el motor y el Hub le hablan a
+`backend:8000` **por la red interna** (no pasan por el proxy) y el 404 se aplica solo al camino de afuera.
+
+Qué sigue funcionando igual desde las PC: `http://<servidor>:8091/docs`, `/health`, `/api/v1/gw/*` (el gateway),
+el login del panel y toda la API. No cambió ningún puerto (`8090` panel, `8091` API, `8095`/`8097` Hub).
+
+Comprobarlo (desde cualquier PC de la LAN o desde el servidor; un pedido al gateway con una llave válida responde igual que antes):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/health                              # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/docs                                   # 200 (Swagger de la API)
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/internal/identity            # 404
+curl -s -o /dev/null -w '%{http_code}\n' -H "X-Sentinel-Internal: $ENGINE_MASTER_KEY" \
+     http://localhost:8091/api/v1/internal/audit/probe                                              # 404 aunque traiga el secreto (antes: 200)
+docker compose ps api-proxy backend                                                                 # backend sin puertos publicados; api-proxy en 0.0.0.0:8091
+```
+
+Notas de operación:
+
+- **Al actualizar** una instalación que ya tenía el backend publicando `8091`: `./install.sh` recrea el backend
+  (sin puerto) y arranca el proxy en la misma orden, así que el `8091` queda sin servicio unos segundos. Si otro
+  proceso (que no es este instalador) usa el `8091`, el instalador se detiene antes y lo dice: liberarlo y volver a correr.
+- Los logs del proxy: `./elea-logs.sh api-proxy`. Si el proxy aparece «unhealthy», casi siempre es el backend (el
+  chequeo pasa por el camino completo).
+- La imagen del proxy va fijada por digest en `docker-compose.yml` (la misma que usa el panel de producción);
+  subirla es un cambio deliberado, por PR. Al subir de versión, correr `bash tests/test-proxy.sh` con un
+  binario `caddy` de esa versión (`ELEA_CADDY_BIN=/ruta/caddy`): corre el proxy de verdad contra un backend de mentira.
+- No hay TLS: es HTTP plano de LAN, igual que hasta ahora. Para HTTPS, ponerlo detrás del ingress corporativo del cliente.
+- Con el proxy no se puede publicar un puerto del backend por error: no hay ningún `ports:` en el backend y
+  `bash tests/test-proxy.sh` falla si aparece.
 
 **Instalación nueva**: no hay nada que hacer; `./install.sh` crea las dos bases solo.
 
@@ -134,11 +178,14 @@ o `./migrar-base-motor.sh`.
 
 ### Separar la base del motor — runbook de producción (VPN + consola web)
 
-> **Estado de la verificación.** El procedimiento se ensayó **a mano** con Docker el 06-oct-2026 (ida,
-> vuelta atrás B y C, instalación nueva, y el caso destructivo). Estos scripts lo automatizan y se
-> probaron contra un Docker simulado (`bash tests/test-base-motor.sh`), **no** contra contenedores
-> reales: falta el ensayo de punta a punta con ellos (tarea «ensayo», con la compuerta del dueño). Los
-> tiempos de abajo son de una sola corrida en una PC con datos de prueba; el servidor de Elea no se midió.
+> **Estado de la verificación.** El procedimiento se ensayó **a mano** con Docker el 06-oct-2026, y los
+> scripts se probaron contra un Docker simulado (`bash tests/test-base-motor.sh`) y **de punta a punta con
+> contenedores reales** ese mismo día (`ENSAYO-SEPARAR-BASES.md`): instalación nueva, actualización de una
+> instalación vieja con la compuerta de integridad, vuelta atrás B y arranque normal del motor con
+> `DISABLE_SCHEMA_UPDATE=true`. **No se probaron con contenedores reales**: la vuelta atrás A, la C, el borrado
+> de las copias viejas, `--volver-a-separar` y el proxy `api-proxy` (estos dos últimos, solo con Docker simulado
+> y con un Caddy real fuera de Docker). Los tiempos de abajo son de una PC con datos de prueba; el servidor de
+> Elea no se midió.
 
 **Ventana.** Medido en el ensayo: ≈ **62 s** con el motor parado (parar → crear base → copiar → motor
 sano), con tablas de ~13 MB; con una tabla de gasto de 1,7 GB la copia sumó ~40 s más (medido aparte).
@@ -202,9 +249,10 @@ docker compose restart backend && docker compose logs backend | tail -5         
 Prueba funcional (a mano, con una pregunta real por cada una): **planillas**, **presentación** y **chat con
 documentos**. En cada una: `docker exec elea-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM audit_logs"`
 sube en 1, y `./migrar-base-motor.sh --gasto` (esperar ≥ 70 s desde el pedido) muestra el gasto de la
-llave. El panel de costos lee la auditoría y no debería cambiar de criterio. Observación del ensayo, **no
-causada por separar** (se reproduce con la base compartida): tras reiniciar el motor, el pedido siguiente
-se registró con gasto 0; si pasa en el servidor, mirarlo aparte y no confundirlo con una falla de la migración.
+llave. El panel de costos lee la auditoría y no debería cambiar de criterio. **Usar un texto distinto en cada
+pregunta de la prueba**: el motor parece cachear los pedidos idénticos (ensayo del 06-oct-2026, §6.4: de 5 pedidos
+iguales solo el primero sumó gasto; los demás dieron gasto 0 y 1–2 s de latencia). No tiene que ver con separar
+las bases (pasa también con la base compartida): una pregunta repetida que no sube el gasto no es una falla de la migración.
 
 Cuando todo esté bien, `./install.sh` completa la actualización normal (resto de las imágenes, etc.).
 
@@ -213,8 +261,30 @@ Cuando todo esté bien, `./install.sh` completa la actualización normal (resto 
 | Escalón | Cuándo | Qué hacer |
 |---|---|---|
 | **A** | El script falla *antes* de apuntar el motor a la base nueva (copia o compuerta) | **Automática**: borra `elea_engine` (solo si la creó esa corrida) y arranca con `docker start` los contenedores viejos tal como estaban. El `.env` no se toca. |
-| **B** | Después de apuntar el motor, mientras las tablas viejas sigan en `elea_gateway` | `./migrar-base-motor.sh --vuelta-atras` (pide escribir `VOLVER`; ~50 s). Pone en `.env` `ENGINE_DB=<base del Guardian>`, `ENGINE_IDENTITY_URL=`, `ENGINE_AUDIT_URL=` (vacías = camino por SQL de la base compartida) y la imagen anterior en `ENGINE_IMAGE`, y recrea el motor. Se pierde solo el gasto que el motor contó en `elea_engine` desde el corte (la auditoría vive en el Guardian y no se afecta). Queda otra vez con base compartida: no subir la imagen del motor hasta volver a separar. |
+| **B** | Después de apuntar el motor, mientras las tablas viejas sigan en `elea_gateway` | `./migrar-base-motor.sh --vuelta-atras` (pide escribir `VOLVER`; ~50 s). Pone en `.env` `ENGINE_DB=<base del Guardian>`, `ENGINE_IDENTITY_URL=`, `ENGINE_AUDIT_URL=` (vacías = camino por SQL de la base compartida) y la imagen anterior en `ENGINE_IMAGE`, y recrea el motor. Se pierde solo el gasto que el motor contó en `elea_engine` desde el corte (la auditoría vive en el Guardian y no se afecta). Anota la base que se separó (`.migracion-motor/base-motor-separada`) y deja `elea_engine` con sus tablas, sin tocarla. Queda otra vez con base compartida: no subir la imagen del motor hasta volver a separar (ver abajo). |
 | **C** | `elea_gateway` dañada | Restaurar la copia completa en una base nueva y comprobarla (ver abajo). |
+
+**Volver a separar después de una vuelta atrás B.** Con la vuelta B el `.env` queda con `ENGINE_DB` igual a
+`POSTGRES_DB`, y el comando pelado `./migrar-base-motor.sh` **no sirve en ese estado**: se niega (código ≠ 0) y
+dice cuál usar. El comando es:
+
+```bash
+./migrar-base-motor.sh --volver-a-separar --dry-run   # el plan con los nombres reales, sin tocar nada
+./migrar-base-motor.sh --volver-a-separar             # pide escribir SEPARAR; mismo corte que la primera vez
+```
+
+Hace lo mismo que la separación original (previa con copia completa, corte, `pg_dump -T`, compuerta de
+integridad, apuntar el motor con las dos URL internas, verificar), con estas diferencias:
+
+- La base a la que vuelve la toma de la nota que dejó la vuelta B (`.migracion-motor/base-motor-separada`);
+  sin nota, `elea_engine`.
+- La base vieja del motor (la que quedó con tablas desde la separación anterior) **se renombra a
+  `elea_engine_vieja_<fecha>`, no se borra**. Si un paso falla antes de apuntar el motor, la vuelta atrás A le
+  devuelve su nombre. Borrarla es decisión de una persona (`DROP DATABASE`, con copia previa); el gasto que contiene
+  desde el corte anterior ya se había dejado fuera con la vuelta B.
+- En `.env` repone `ENGINE_DB`, borra las URL vacías y quita `ENGINE_IMAGE` (vuelve la imagen fijada por digest).
+- Solo vale con la vuelta B activa (`ENGINE_DB` = `POSTGRES_DB`) y con las tablas del motor todavía en la base del
+  Guardian; si no, se niega y lo dice. `./install.sh` **no** vuelve a separar solo después de una vuelta B: avisa y sigue con la base compartida.
 
 Vuelta C, comandos (la restauración y el arranque del motor sobre ella se ensayaron; el cambio de nombre final no):
 
@@ -352,8 +422,26 @@ docker compose down -v
 la vez su base propia **y** las dos URL internas (`SENTINEL_IDENTITY_URL`/`SENTINEL_AUDIT_URL`); con una
 sola de las dos cosas no funciona. Ver «Base propia del motor».
 
+**`/api/v1/internal/...` da 404 desde mi PC** (o desde el servidor, por `localhost:8091`): es lo esperado. Ese plano
+solo se habla por la red interna entre el motor y el backend; el proxy lo niega a propósito (ver «Proxy de la API»).
+Si el 404 aparece en `/api/v1/gw/*` o en el resto de la API, no es esto: revisar `docker compose ps` y `./elea-logs.sh backend`.
+
+**`./install.sh` dice que el puerto 8091 lo usa otro proceso**: el proxy de la API necesita ese puerto. `ss -ltnp | grep 8091`
+muestra quién lo tiene; liberarlo y volver a correr.
+
 **El motor (`engine`) tarda en aparecer sano la primera vez**: es esperado con una base
 de datos nueva (migra sus tablas) — el instalador ya espera hasta 5 minutos. Si en algún
 momento el contenedor se reinicia solo una vez durante ese lapso (`docker compose ps`
 muestra un reinicio reciente), es normal — `restart: unless-stopped` lo recupera solo,
 no hace falta intervenir.
+
+## Pruebas del instalador (sin Docker real)
+
+```bash
+bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
+bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
+ELEA_CADDY_BIN=/ruta/a/caddy bash tests/test-proxy.sh   # si `caddy` no está en el PATH
+docker compose config -q         # el compose es válido con tu .env
+```
+
+`tests/test-proxy.sh` sin binario `caddy` **salta** la parte que corre el proxy (lo dice en la salida) y no falla.
