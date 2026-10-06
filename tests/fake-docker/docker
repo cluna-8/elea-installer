@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Docker de mentira para probar migrar-base-motor.sh y respaldo.sh sin levantar nada.
+# Registra cada llamada en $FAKE_LOG y contesta según las variables FAKE_* (ver tests/test-base-motor.sh).
+echo "docker $*" >> "${FAKE_LOG:?}"
+case "${1:-}" in
+  compose)
+    case "${2:-}" in
+      version) echo "Docker Compose version v2.39.2" ;;
+      config)  echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa" ;;
+    esac
+    exit 0 ;;
+  inspect)
+    case "$*" in
+      *Health.Status*) echo healthy ;;
+      *Config.Image*)  echo "${FAKE_ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine:latest}" ;;
+      *'{{.Image}}'*)  echo "sha256:0123" ;;
+    esac
+    exit 0 ;;
+  image) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:viejo"; exit 0 ;;
+  ps)    for c in $FAKE_CLIENTS; do echo "$c"; done; exit 0 ;;
+  logs)  echo "${FAKE_ENGINE_LOG:-Application startup complete}"; exit 0 ;;
+  start|stop) exit 0 ;;
+  exec) ;;
+  *) exit 0 ;;
+esac
+
+# docker exec [-i] [-e …] <contenedor> <comando…>
+shift
+while [ $# -gt 0 ]; do case "$1" in -i) shift ;; -e) shift 2 ;; *) break ;; esac; done
+cont="$1"; shift
+cmd="$1"; shift
+case "$cmd" in
+  pg_dump)    echo "PGDMP-falso"; exit 0 ;;
+  pg_restore) cat >/dev/null; echo "1; 1259 1 TABLE public users elea_admin"; exit 0 ;;
+  sh)         exit "${FAKE_DUMP_RC:-0}" ;;
+  python3)    echo "${FAKE_KEY_STATUS:-200}"; exit 0 ;;
+  psql)
+    db=""
+    while [ $# -gt 0 ]; do [ "$1" = -d ] && db="$2"; shift; done
+    sql=$(cat)
+    echo "$sql" >> "${FAKE_LOG}.sql"
+    case "$sql" in
+      *shobj_description*) echo "${FAKE_MARKER:-}" ;;
+      *"FROM pg_database WHERE datname = '"*)
+        n=${sql#*datname = \'}; n=${n%%\'*}
+        for d in $FAKE_DBS; do [ "$d" = "$n" ] && echo 1; done ;;
+      *"tabla|"*)
+        echo "tabla|LiteLLM_VerificationToken|8"; echo "libro|127|0"
+        if [ "$db" = elea_engine ] && [ -n "${FAKE_FOTO_DIFF:-}" ]; then echo "llaves|8|distinta"; else echo "llaves|8|abc"; fi ;;
+      *"count(*)"*"NOT (tablename LIKE"*) echo 0 ;;
+      *"count(*) FROM pg_tables WHERE schemaname = 'public' AND (tablename LIKE"*)
+        if [ "$db" = elea_engine ]; then echo "${FAKE_ENG_MOTOR:-0}"; else echo "${FAKE_GW_MOTOR:-0}"; fi ;;
+      *"SELECT tablename FROM pg_tables"*) printf 'alembic_version\nusers\naudit_logs\n' ;;
+      *"count(*) FROM pg_tables WHERE schemaname = 'public'"*) echo "${FAKE_GW_TABLES:-87}" ;;
+      *"_prisma_migrations WHERE finished_at"*) echo 0 ;;
+      *alembic_version*) echo 199fe429762a ;;
+    esac
+    exit 0 ;;
+esac
+exit 0

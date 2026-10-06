@@ -20,6 +20,28 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Crea la base PROPIA del motor (ENGINE_DB, default elea_engine). Servicio de un solo disparo e
+  # idempotente: si la base ya existe no hace nada. Sirve tanto en una instalación nueva como al
+  # actualizar una con volumen (donde `docker-entrypoint-initdb.d` no corre) y no depende de ningún
+  # bind-mount. Motivo: el migrador del motor aplica un diff base↔schema que BORRA las tablas ajenas
+  # al motor; con base propia ese diff solo puede tocar tablas del motor.
+  db-engine-init:
+    image: postgres:16-alpine
+    container_name: elea-db-engine-init
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env}
+      PGUSER: ${POSTGRES_USER:-elea_admin}
+      ENGINE_DB: ${ENGINE_DB:-elea_engine}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        printf '%s\n' "SELECT format('CREATE DATABASE %I', :'motor') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'motor') \gexec" \
+          | psql -h db -d postgres -v ON_ERROR_STOP=1 -v motor="$$ENGINE_DB"
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [elea-net]
+
   redis:
     image: redis:7-alpine
     container_name: elea-redis
@@ -45,10 +67,24 @@ services:
     restart: unless-stopped
 
   engine:
-    image: ghcr.io/cluna-8/elea-guardian-engine:latest
+    # FIJADA POR DIGEST (decisión D3, oct-2026): un `./install.sh` o un `docker compose pull` nunca
+    # cambia el motor por su cuenta. Un motor sobre otra versión puede traer migraciones propias; se
+    # sube a propósito, con copia previa (README, "Subir la versión del motor"). El valor sale de la
+    # línea `PINNED elea-guardian-engine=…` que imprime `deploy/release/publish-elea.sh` (repo elea).
+    # Este digest = la etiqueta 2026-09-17 de la imagen del motor.
+    image: ${ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine@sha256:1928af9d1ef6bc6325150ea8cf0a8542020d4b461da621e4079f3d8a6189dafe}
     container_name: elea-engine
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-elea_admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-elea_gateway}
+      # Base PROPIA del motor (jamás la del backend): ver `db-engine-init`. Con la base compartida el
+      # migrador del motor borraba las tablas del Guardian (users, audit_logs, alembic_version…).
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-elea_admin}:${POSTGRES_PASSWORD}@db:5432/${ENGINE_DB:-elea_engine}
+      # Con base separada la identidad de las llaves y la auditoría viven en la base del backend:
+      # el motor las pide por HTTP interno (protegido con ENGINE_MASTER_KEY). Sin estas dos líneas
+      # TODAS las llaves darían 401 y el tráfico dejaría de auditarse. Vacías (`ENGINE_IDENTITY_URL=`
+      # en .env) = camino SQL de la base compartida: solo para la vuelta atrás de
+      # `./migrar-base-motor.sh --vuelta-atras`.
+      - SENTINEL_IDENTITY_URL=${ENGINE_IDENTITY_URL-http://backend:8000/api/v1/internal/identity}
+      - SENTINEL_AUDIT_URL=${ENGINE_AUDIT_URL-http://backend:8000/api/v1/internal/audit}
       - LITELLM_MASTER_KEY=${ENGINE_MASTER_KEY:?Falta ENGINE_MASTER_KEY en .env}
       - AZURE_API_KEY=${AZURE_OPENAI_API_KEY}
       - AZURE_API_BASE=${AZURE_OPENAI_ENDPOINT}
@@ -72,6 +108,7 @@ services:
       - SENTINEL_PII_VAULT_TTL_SECONDS=${SENTINEL_PII_VAULT_TTL_SECONDS:-7776000}
     depends_on:
       db: { condition: service_healthy }
+      db-engine-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       nlp-analyzer: { condition: service_healthy }
     # tabular-net / presentations-net (spec 050): los motores le hablan directo a este motor

@@ -53,13 +53,35 @@ set -a; source .env; set +a
 # ── 2. Registro de imágenes ─────────────────────────────────────────────────────────
 # Las imágenes son públicas (decisión del 14-sep-2026): no hace falta login. Solo si la
 # descarga falla (imagen todavía privada, o red que exige credenciales) se pide un token.
-if ! docker pull -q ghcr.io/cluna-8/elea-guardian-engine:latest >/dev/null 2>&1; then
+# El motor va FIJADO POR DIGEST en docker-compose.yml (decisión D3, oct-2026): este script nunca lo
+# cambia por su cuenta; subirlo es una tarea deliberada (README, "Subir la versión del motor").
+if [ -n "${ENGINE_IMAGE:-}" ] && [ "${ENGINE_IMAGE#*@sha256:}" = "${ENGINE_IMAGE}" ]; then
+  echo "  ! ENGINE_IMAGE (.env) no es un digest (…@sha256:…): el motor puede cambiar de versión sin aviso." >&2
+fi
+if ! docker compose pull --quiet engine >/dev/null 2>&1; then
   log "No se pudo descargar la imagen del Guardian sin credenciales — login al registro"
   echo "Pedí un token de lectura (read:packages) a quien te dio este instalador."
   read -rp "Usuario de GitHub: " GHCR_USER
   read -rsp "Token: " GHCR_TOKEN; echo
   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || die "No se pudo autenticar al registro."
 fi
+
+# ── 2b. Base propia del motor ───────────────────────────────────────────────────────
+# El motor tiene su base (ENGINE_DB) separada de la del Guardian: con la base compartida su migrador
+# borra las tablas del Guardian. Una instalación vieja la tiene compartida: se migra ANTES de
+# levantar nada con el compose nuevo (que apuntaría el motor a una base vacía). Una instalación
+# nueva no tiene nada que migrar. Detalle y vuelta atrás: README.
+rc=0; ./migrar-base-motor.sh --detectar || rc=$?
+case "$rc" in
+  0) log "Esta instalación tiene la base del motor compartida con el Guardian: se separa (hay un corte de ~1-3 min)"
+     ./migrar-base-motor.sh || die "La migración de la base del motor no terminó. Estado y vuelta atrás: README, «Separar la base del motor»." ;;
+  3) # Nada que separar. Antes de actualizar una instalación con datos, copia de las dos bases.
+     if [ "${ELEA_SIN_RESPALDO:-0}" != 1 ]; then
+       log "Copia de seguridad de las bases (antes de tocar nada)"
+       ./respaldo.sh || die "Sin copia previa no se actualiza (ELEA_SIN_RESPALDO=1 para omitirla bajo tu responsabilidad)."
+     fi ;;
+  *) die "Estado de las bases ambiguo (código ${rc}): no se actualiza nada. Ver README, «Estado ambiguo»." ;;
+esac
 
 # ── 3. Levantar todo menos el cliente (necesita keys que generamos después) ─────────
 log "Descargando y levantando el motor y AnythingLLM (sin depender de backend todavía)"
