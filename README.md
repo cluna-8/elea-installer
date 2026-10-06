@@ -89,6 +89,10 @@ down -v` si había algo) antes de sincronizarlo a Azure DevOps.
 El mismo `./install.sh` sirve para actualizar: no borra datos, no toca volúmenes ni el `.env`.
 Probado el 14-sep-2026 sobre una instalación previa con cuentas de servicio ya creadas.
 
+> **Servidor de Elea (producción, por VPN y consola web)**: no usar solo esta sección. El orden completo —respaldo, separar la base del motor,
+> usuario de cumplimiento, verificación, activación de la extensión de redirección y vuelta atrás, cada paso con su verificación— está en
+> «Actualizar el servidor de Elea (057 + bases separadas)», más abajo.
+
 ```bash
 cd ~/Eleia-cli
 git pull                                   # este repo (GitHub público; Azure DevOps solo de respaldo)
@@ -113,6 +117,470 @@ una vez, con `./crear-super-admin.sh` (ver «Usuario de cumplimiento»). Si ya h
 Al terminar, las sesiones del Hub se cierran (viven en memoria): cada persona vuelve a entrar.
 Verificar: entrar al Hub, ver las tres secciones (documentos, planillas, presentaciones) y, como
 `admin`, abrir `http://<servidor>:8097/templates`.
+
+## Actualizar el servidor de Elea (057 + bases separadas)
+
+Un solo orden, de punta a punta, para el servidor de producción: se opera desde la **consola web por VPN**, copiando y pegando.
+Antes de empezar el dueño ya hizo **M1** (congelar las actualizaciones del motor) y **M2** (respaldo). Cada paso trae sus comandos, **cómo se
+verifica** y **qué hacer si falla**; el detalle de cada pieza está en las secciones de más abajo («Separar la base del motor», «Usuario de
+cumplimiento», «Extensión de redirección de modelos»).
+
+**Cómo usarlo.**
+
+* Un bloque por vez; leer la salida **antes** de pegar el siguiente. Si un paso falla, **no seguir**: la consola web ejecuta lo que se pega línea
+  por línea y no se detiene sola. Por eso los bloques que cambian algo están armados con `if … fi` o con `&&`.
+* Todo se corre en `~/Eleia-cli`. Lo que está entre `<…>` es un dato que hay que reemplazar; el bloque que lo necesita **se niega** si no se lo cambió.
+* Nada de este runbook usa Docker de forma destructiva: no hay `down -v`, ni borrado de volúmenes, ni `DROP DATABASE`. Antes de cada cambio grande hay una copia verificada.
+* No pegar la salida de ningún comando en un chat ni en un correo sin leerla: algunas pantallas muestran una contraseña (Pasos 3 y 4).
+
+| Paso | Qué | Corte del servicio | Si hay que parar |
+|---|---|---|---|
+| 0 | Precondiciones y datos a anotar | no | no se tocó nada |
+| 1 | Respaldo con `./respaldo.sh` | no | no se tocó nada |
+| 2 | Bajar el instalador nuevo | no | `git pull` no cambia lo que corre |
+| 3 | Separar la base del motor (actualización) | **sí, ~2,5 min** (reservar 30 min) | vuelta atrás A/B/C de la separación |
+| 4 | Crear el primer `super_admin` | no | se puede repetir |
+| 5 | Verificar **sin** redirección | no | punto de parada: la instalación queda completa |
+| 6 | Activar `ELEA_REDIRECT=1` | **sí, corto** (motor, backend y panel) | nivel 1 o 2 del Paso 8 |
+| 7 | Verificar con redirección | no | nivel 1 del Paso 8 |
+| 8 | Vuelta atrás en dos niveles | nivel 1: corto · nivel 2: sí | — |
+
+> **Estado de la verificación.** Las piezas se probaron por separado: la separación de la base del motor con contenedores reales el 06-oct-2026
+> (`ENSAYO-SEPARAR-BASES.md`); todos los scripts y este runbook (que los comandos existan, el orden, las guardas) con Docker simulado
+> (`bash tests/test-runbook-actualizar.sh`, `bash tests/test-redirect-optin.sh`). **No se probó con contenedores reales** la activación de la extensión
+> ni su vuelta atrás, ni este orden completo de punta a punta: la prueba local del instalador con `ELEA_REDIRECT=1` (**T102**, en la PC del owner) tiene que
+> estar hecha **antes** del Paso 6 de este runbook. Los tiempos son de una PC con datos de prueba; el servidor de Elea no se midió.
+>
+> **Marcadores a completar tras T102** (no se inventan; mientras estén, el runbook se niega a activar):
+> `<TAG-A-COMPLETAR-TRAS-T102>` (el `ELEA_EXT_VERSION` de las imágenes `-ext`, Paso 6); `ELEA_EXT_MIN_VERSION` en `install.sh`, hoy
+> `PENDIENTE-PRIMER-RELEASE`, que el release de las `-ext` reemplaza por su fecha (Pasos 2 y 6); las referencias por digest de las `-ext`
+> (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE`, opcionales, Paso 6); el nombre de la pantalla de auditoría del panel y el tiempo de corte
+> del Paso 6 (`[COMPLETAR-TRAS-T102]`, Pasos 6 y 7).
+
+### Paso 0 — Precondiciones y datos a anotar
+
+Sin corte. Todo lo que sale acá se guarda en un archivo para compararlo después (no contiene secretos: nombres de imágenes, versiones, tamaños).
+
+```bash
+cd ~/Eleia-cli
+set -a; source .env; set +a
+{
+  date -Is
+  git log -1 --format='instalador actual: %h %ad %s' --date=short
+  ls -l respaldo.sh migrar-base-motor.sh crear-super-admin.sh   # tienen que existir (si no, ver «Si falla»)
+  ./migrar-base-motor.sh --inventario                  # imagen y versión del motor + tamaño de sus tablas
+  docker compose ps                                    # estado de cada contenedor
+  docker compose images                                # imágenes en marcha (repositorio, tag, ID)
+  docker inspect --format '{{.Name}} {{.Config.Image}} {{.Image}}' elea-engine elea-backend elea-frontend elea-rag-client
+  docker exec elea-db psql -U "${POSTGRES_USER:-elea_admin}" -d "${POSTGRES_DB:-elea_gateway}" -Atc 'SELECT version_num FROM alembic_version'
+  docker exec elea-db psql -U "${POSTGRES_USER:-elea_admin}" -d "${POSTGRES_DB:-elea_gateway}" -Atc 'SELECT pg_size_pretty(pg_database_size(current_database()))'
+  df -h . /var/lib/docker                              # espacio libre donde van los respaldos y donde vive Docker
+  docker system df
+  grep -E '^(ENGINE_IMAGE|ENGINE_DB|ELEA_REDIRECT|ELEA_EXT_VERSION|COMPOSE_FILE|EXTRA_ENV_FILE)=' .env || echo "(.env sin esas variables: lo esperado)"
+} 2>&1 | tee ~/notas-previas-057.txt
+```
+
+El respaldo **M2** existe y se puede leer (reemplazar la ruta; sirve una carpeta de `./respaldo.sh` o un `.dump` suelto):
+
+```bash
+M2='<RUTA-DEL-RESPALDO-M2>'
+if [ -d "$M2" ]; then
+  ls -l "$M2"
+  [ -f "$M2/SHA256SUMS" ] && (cd "$M2" && sha256sum -c SHA256SUMS)
+  for f in "$M2"/*.dump; do [ -f "$f" ] && { echo "$f"; docker exec -i elea-db pg_restore -l < "$f" | grep -c ' TABLE '; }; done
+elif [ -f "$M2" ]; then
+  ls -l "$M2"; docker exec -i elea-db pg_restore -l < "$M2" | grep -c ' TABLE '
+else
+  echo "PARAR: no encuentro el respaldo M2 en $M2"
+fi
+```
+
+**Verificar** (todo tiene que cumplirse):
+
+* El motor en marcha es **`1.92.0 0.4.74`** (línea de `--inventario`): es la versión sobre la que se hizo el análisis. M1 se cumple si es la misma que antes de congelar y
+  la imagen del motor (`elea-engine` en la salida) no cambió: nadie corrió `docker compose pull` ni `./install.sh` desde entonces.
+* Hay espacio: como regla práctica (no medida) **al menos 3 veces el tamaño de la base** libres donde va `respaldos/` y en el disco de Docker. Cada corrida de `./install.sh`
+  y de `./migrar-base-motor.sh` toma una copia de las dos bases; en este runbook se toman varias.
+* La salida de M2 muestra una cantidad de tablas mayor que 0 por cada `.dump` (y `OK` en cada línea de `sha256sum -c`, si la hay).
+* `grep ELEA_ .env` **no** muestra `ELEA_REDIRECT=1` (si lo hubiera, `./install.sh` activaría la extensión en los Pasos 3 y 4; sacarlo antes).
+* Se anotó el nombre del archivo `~/notas-previas-057.txt`: es el «antes» de todo lo que sigue.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| Falta `respaldo.sh`, `migrar-base-motor.sh` o `crear-super-admin.sh` (el instalador del servidor es anterior) | Adelantar el `git pull` del Paso 2 (solo baja archivos; no cambia lo que corre) y repetir este Paso 0 y el Paso 1. M2 es la copia de partida hasta entonces. |
+| El motor da otra versión que `1.92.0 0.4.74` | **PARAR** y consultar: el análisis de la separación habría que releerlo contra esa versión. |
+| El motor cambió de imagen desde M1 | **PARAR**: alguien actualizó. No seguir hasta saber qué. |
+| Poco espacio | Liberar (`docker system df` dice qué se puede recuperar) o copiar los respaldos viejos fuera del servidor. No seguir con poco espacio: un respaldo cortado a la mitad no sirve. |
+| M2 no existe o `pg_restore -l` no lo lee | **PARAR**. Tomar el respaldo del Paso 1 y verificarlo: ese pasa a ser la copia de partida. No se actualiza sin una copia legible. |
+| `ELEA_REDIRECT=1` en `.env` | `sed -i '/^ELEA_REDIRECT=/d' .env` y volver a empezar el Paso 0. |
+
+### Paso 1 — Respaldo con `./respaldo.sh`
+
+Sin corte. Copia **las dos bases** (la del Guardian y, si ya existe, la del motor), verifica cada copia con `pg_restore -l` y anota su SHA-256. Carpeta `700`, archivos `600`.
+
+```bash
+cd ~/Eleia-cli
+./respaldo.sh                                          # respaldos/AAAA-MM-DD-HHMMSS/…
+D=$(cat .ultimo-respaldo); echo "$D"
+(cd "$D" && sha256sum -c SHA256SUMS && cat MANIFEST.txt)
+ls -l "$D"
+cp -a "$D" ~/respaldo-pre-057-"$(basename "$D")"        # una copia que la retención de respaldo.sh no toca
+```
+
+**Verificar.** `sha256sum -c` da `OK` por cada `.dump`; `MANIFEST.txt` nombra las bases respaldadas y la imagen del motor en marcha; los `.dump` pesan algo parecido a lo
+anotado en el Paso 0. La carpeta está en el **mismo servidor** que la base: copiarla también **fuera del servidor** (`scp` o el almacenamiento de la empresa) antes de seguir; si no, no es un respaldo.
+`./respaldo.sh` conserva solo las últimas 10 carpetas de `respaldos/` y este runbook toma varias: por eso la copia de la última línea queda fuera de esa carpeta.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| `No existe la base …: instalación nueva` | No es una actualización: usar `./install.sh` (ver «Instalación»). Este runbook es solo para actualizar. |
+| `pg_dump … falló` / `La copia … no se puede leer` / `quedó vacío` | **PARAR.** `docker compose ps db` (tiene que estar `healthy`), espacio en disco, y repetir. No se sigue sin una copia verificada. |
+| `sha256sum -c` da `FAILED` | La copia está dañada: borrar esa carpeta y repetir `./respaldo.sh`. |
+
+### Paso 2 — Bajar el instalador nuevo
+
+Sin corte: bajar los archivos no cambia lo que está corriendo. **No** correr `docker compose up -d` a mano después de esto hasta terminar el Paso 3: el motor arrancaría sobre una base vacía.
+
+```bash
+cd ~/Eleia-cli
+git status --short                                     # tiene que salir vacío
+git fetch origin && git log --oneline HEAD..origin/main
+git pull origin main
+git log -1 --format='instalador nuevo: %h %ad %s' --date=short
+docker compose config -q && echo "compose OK"
+grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # PENDIENTE-PRIMER-RELEASE = todavía no se puede activar la extensión (Paso 6)
+ls -l respaldo.sh migrar-base-motor.sh crear-super-admin.sh activar-redirect.sh docker-compose.redirect.yml proxy/Caddyfile
+```
+
+**Verificar.** `git pull` termina sin conflictos; el último commit es el esperado; `compose OK`; los seis archivos de la última línea existen (los scripts, con permiso de ejecución).
+Si `ELEA_EXT_MIN_VERSION` sigue en `PENDIENTE-PRIMER-RELEASE`, los Pasos 3 a 5 se pueden hacer igual, pero el Paso 6 se va a negar: es lo esperado hasta que el release de las `-ext` fije esa fecha.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| `git status` no sale vacío / `git pull` se queja de cambios locales | **No** usar `git reset --hard` ni `git stash`: consultar. Alguien tocó archivos del instalador en el servidor. |
+| `git pull` no llega a GitHub | Ver «Cómo llega este instalador al servidor de Elea» (Azure DevOps de respaldo). |
+| `docker compose config -q` da error | Falta o sobra una variable en `.env`: el mensaje dice cuál. No seguir hasta que dé `compose OK`. |
+
+### Paso 3 — Separar la base del motor (actualización, no instalación nueva)
+
+**Con corte**: el Hub, planillas, presentaciones y AnythingLLM quedan sin servicio ~2,5 min (medido en una PC; con una tabla de gasto grande, más). **Reservar 30 minutos.**
+El motor tiene que pasar a su **propia base** (`elea_engine`) *antes* de levantar el compose nuevo; el detalle y las vueltas atrás están en «Separar la base del motor — runbook de producción».
+
+Antes de la ventana (sin corte):
+
+```bash
+cd ~/Eleia-cli
+set -a; source .env; set +a
+./migrar-base-motor.sh --detectar; echo "código $?"    # 0 = hay que separar · 3 = ya está separada (saltear la migración) · 4 = ambiguo (PARAR)
+./migrar-base-motor.sh --dry-run                       # el plan con tus nombres reales; no toca nada
+```
+
+En la ventana. Este primer comando **pregunta** (hay que escribir `MIGRAR`), así que se pega **solo**: si se pegara junto con otros, la pregunta se comería las líneas siguientes. Termina en «Listo»:
+
+```bash
+cd ~/Eleia-cli
+./migrar-base-motor.sh                                 # escribir MIGRAR cuando lo pida
+```
+
+Recién después, la verificación y `./install.sh`, que completa la actualización (imágenes nuevas, proxy de la API, resto de servicios):
+
+```bash
+./migrar-base-motor.sh --verificar                     # compuerta entre las dos bases + llaves + log: debe terminar en «OK»
+./install.sh                                           # repetirlo es seguro; al final muestra la contraseña de admin: copiarla y luego `clear`
+```
+
+Si `--detectar` dio 3, omitir el comando de `MIGRAR` y correr el segundo bloque. **No** poner `ELEA_REDIRECT` todavía.
+
+**Verificar.** `--verificar` termina en `OK`; `./install.sh` termina con «Listo. Todo corriendo.»; `docker compose ps` muestra todo sano, el backend **sin** puertos publicados y `api-proxy` en `0.0.0.0:8091`;
+`./migrar-base-motor.sh --detectar` ahora da código 3. Las sesiones del Hub se cerraron (viven en memoria): cada persona vuelve a entrar.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| `--detectar` da 4 | **PARAR**: estado ambiguo. Ver «Estado ambiguo (`./install.sh` se niega a seguir)». No se migra nada solo. |
+| La migración falla *antes* de apuntar el motor a la base nueva (copia o compuerta) | Vuelta atrás **A**, **automática**: arranca los contenedores viejos tal como estaban y el `.env` no se toca. Comprobar `docker compose ps`, anotar el mensaje, **no seguir** y consultar. |
+| `--verificar` falla o las llaves dan 401 después del corte | Vuelta atrás **B**: `./migrar-base-motor.sh --vuelta-atras` (pide escribir `VOLVER`, ~50 s). Queda otra vez con base compartida; no subir la imagen del motor. Para reintentar, `./migrar-base-motor.sh --volver-a-separar`. |
+| `elea_gateway` dañada | Vuelta atrás **C**: restaurar la copia del Paso 1 en una base nueva (ver «Vuelta C, comandos»). |
+| `./install.sh` dice que el puerto 8091 lo usa otro proceso | `ss -ltnp \| grep 8091`, liberarlo y repetir `./install.sh`. |
+| `./install.sh` falla a mitad | Es idempotente: leer el mensaje, corregir y repetirlo. |
+
+### Paso 4 — Crear el primer `super_admin`
+
+Sin corte. El usuario de cumplimiento **no** se crea solo al actualizar (aparece una credencial nueva y es una decisión de la empresa). Se corre **una vez**.
+
+```bash
+cd ~/Eleia-cli
+docker compose ps backend                              # tiene que estar «healthy»
+./crear-super-admin.sh                                 # la contraseña se muestra UNA sola vez: copiarla ANTES de seguir
+```
+
+Recién cuando esté copiada y guardada: `clear` (la pantalla puede quedar en el historial de la consola; si se corrió por una consola web o VPN, cerrar la sesión al terminar).
+
+La contraseña la genera el backend, no se escribe en ningún archivo y es temporal (el usuario tiene que cambiarla en su primer ingreso, en el panel `http://<servidor>:8090`).
+Guardarla en el gestor de contraseñas de la empresa o entregarla en mano a quien cumple ese rol; **nunca** por chat ni por correo. Detalle en «Usuario de cumplimiento».
+
+**Verificar.** Repetir el comando tiene que decir `ya hay un super_admin en esta instalación: no se creó ni se cambió nada` (no cambia nada, se puede repetir sin riesgo):
+
+```bash
+./crear-super-admin.sh
+```
+
+Después, que la persona de cumplimiento entre una vez al panel y cambie la contraseña. Cerrar la sesión de la consola al terminar.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| `No module named src.cli` | La imagen del backend es anterior a este comando: `./install.sh` (baja las imágenes) y repetir. |
+| `ya hay un super_admin` en la **primera** corrida | Ya existía uno: no hace falta nada más. Si se perdió su contraseña, el instalador no la recupera: consultar al equipo antes de tocar la base a mano. |
+| El backend no está `healthy` | `./elea-logs.sh backend`. No seguir con el backend caído. |
+| Se perdió la contraseña antes del primer ingreso | Si hay otro `super_admin`, puede restablecerla desde el panel; si era el único, consultar (ver «Usuario de cumplimiento»). |
+
+### Paso 5 — Verificar sin redirección
+
+Sin corte. Este es un **buen punto para parar**: hasta acá no se tocó nada de la extensión y la instalación queda completa, separada y con proxy. Si algo de lo siguiente no da lo esperado, no seguir.
+
+```bash
+cd ~/Eleia-cli
+set -a; source .env; set +a
+./migrar-base-motor.sh --verificar                                                     # «OK»
+./migrar-base-motor.sh --inventario                                                    # la misma versión del motor que en el Paso 0
+docker compose ps                                                                      # todo sano; backend sin puertos; api-proxy en 0.0.0.0:8091
+docker inspect --format '{{.Name}} {{.Config.Image}}' elea-engine                      # la misma imagen del motor que anotaste (M1)
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/health                            # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/docs                              # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/internal/identity          # 404
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/api/v1/redirect/health            # 404: la extensión todavía no está (lo esperado)
+docker exec elea-db psql -U "${POSTGRES_USER:-elea_admin}" -d "${POSTGRES_DB:-elea_gateway}" -Atc 'SELECT count(*) FROM audit_logs'
+```
+
+Desde **otra máquina de la LAN/VPN** (no el servidor): `curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/internal/identity` tiene que dar **404**.
+
+**Verificar.** Los códigos de arriba. Además, prueba funcional a mano con **una pregunta real por cada servicio** (Hub: chat con documentos, planillas, presentación; un texto **distinto** en cada una,
+porque el motor parece cachear pedidos idénticos): en cada una `audit_logs` sube en 1 (repetir el último `psql`) y `./migrar-base-motor.sh --gasto` (esperar ≥ 70 s) muestra el gasto de la llave. Como `admin`, abrir `http://<servidor>:8097/templates`.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| `/api/v1/internal/identity` **no** da 404 | **PARAR y avisar**: el plano interno quedó expuesto. `docker compose ps` (el backend no debe publicar puertos) y `./elea-logs.sh api-proxy`. No activar nada hasta resolverlo. |
+| `/health` no da 200 | `./elea-logs.sh backend`; el backend puede estar migrando (esperar 1–2 min) o caído. |
+| El motor da 401 a todas las llaves | El motor tiene que tener a la vez su base propia **y** las dos URL internas: ver «El motor da 401 a todas las llaves». Si no se resuelve en la ventana, vuelta atrás **B** del Paso 3. |
+| Una pregunta del Hub no responde o `audit_logs` no sube | `./elea-logs.sh engine` y `./elea-logs.sh client`. Si no sube con un texto nuevo, mirar el log del backend: la auditoría vive ahí. |
+
+### Paso 6 — Activar `ELEA_REDIRECT=1`
+
+**Con corte corto** (el instalador recrea el motor, el backend y el panel; tiempo real `[COMPLETAR-TRAS-T102]`). **Precondiciones**: Paso 5 verde, **T102 hecha** y las imágenes `-ext` publicadas con su tag.
+El instalador comprueba tres condiciones y, si falta alguna, **falla cerrado sin tocar nada**: (1) el compose tiene `api-proxy` y el backend no publica puertos; (2) `ELEA_EXT_VERSION` ≥ `ELEA_EXT_MIN_VERSION`
+(hoy `PENDIENTE-PRIMER-RELEASE`: hasta que el release de las `-ext` lo fije, **no se activa**, y no hay forma de bajarlo desde `.env`); (3) `/api/v1/internal/*` da 404 por el puerto publicado.
+
+Primero, un respaldo propio **previo a la activación** y anotar cuál es (el nivel 2 del Paso 8 lo usa; el instalador toma además uno al activar):
+
+```bash
+cd ~/Eleia-cli
+./respaldo.sh && cat .ultimo-respaldo | tee ~/respaldo-previo-a-la-activacion.txt
+D=$(cat ~/respaldo-previo-a-la-activacion.txt); (cd "$D" && sha256sum -c SHA256SUMS)
+```
+
+Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque se niega mientras el tag sea el marcador:
+
+```bash
+cd ~/Eleia-cli
+ELEA_EXT_VERSION='<TAG-A-COMPLETAR-TRAS-T102>'         # reemplazar por el tag publicado de las imágenes -ext (AAAA-MM-DD)
+if [[ "$ELEA_EXT_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  [ -z "$(tail -c1 .env)" ] || echo >> .env
+  sed -i '/^ELEA_REDIRECT=/d;/^ELEA_EXT_VERSION=/d' .env
+  printf 'ELEA_REDIRECT=1\nELEA_EXT_VERSION=%s\n' "$ELEA_EXT_VERSION" >> .env
+  ./install.sh
+else
+  echo "PARAR: falta el tag de las imágenes -ext (ELEA_EXT_VERSION). No se tocó nada."
+fi
+```
+
+`./install.sh` hace su actualización normal y, al final, `./activar-redirect.sh`: comprueba las tres condiciones, baja las `-ext`, toma su propio respaldo (si es la primera activación), escribe el entorno de la extensión (**fuera del repo, modo 600**:
+`~/.config/elea/redirect.env`, con las llaves generadas una sola vez; nunca se imprime), recrea motor, backend y panel, espera al backend (si una migración de la extensión falla, el backend **aborta** el arranque),
+comprueba que los seeds estén en la imagen y consulta `/api/v1/redirect/health`. **Cualquier respuesta que no sea 200 es un error visible.** Pegar solo `./activar-redirect.sh` no sirve: no conoce el tag mínimo y falla cerrado.
+
+**Verificar**
+
+```bash
+cd ~/Eleia-cli
+set -a; source .env; set +a
+docker inspect --format '{{.Name}} {{.Config.Image}}' elea-engine elea-backend elea-frontend     # las tres terminan en «-ext» (el tag de arriba)
+ls -l "$EXTRA_ENV_FILE"                                                                           # -rw------- (600), fuera de ~/Eleia-cli; NO mostrar su contenido
+docker compose exec -T backend alembic current                                                    # dos revisiones: la de siempre y la de la extensión (según el quickstart de la 057; no verificado en vivo)
+curl -s -w '\n%{http_code}\n' http://localhost:8091/api/v1/redirect/health                        # 200
+./migrar-base-motor.sh --verificar                                                                # el libro de migraciones del motor no cambió
+```
+
+Si se fijó el digest de las `-ext` (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE` en `.env`, de la línea `PINNED …` que imprime `publish-elea.sh`), `docker inspect` muestra esa referencia en lugar del tag.
+Falta, en el panel («Modelos»): publicar los modelos, completar por destino la **jurisdicción de inferencia** y la **entidad responsable** (sin jurisdicción de inferencia el destino se rechaza) y crear una llave por persona. El instalador no hace nada de eso.
+
+**Variables opcionales del enmascarado (no hace falta tocarlas).** La 057 agregó estas variables; **todas tienen un valor por defecto seguro** y el instalador **no las escribe**: rige el default.
+Llegan al motor y al backend por el mismo archivo de entorno de la extensión (`redirect.env`; `EXTRA_ENV_FILE`), y ni el compose ni el instalador definen ninguna, así que lo que se agregue ahí **no se pisa** (lo comprueba `bash tests/test-redirect-optin.sh`).
+
+| Variable | Default | Para qué |
+|---|---|---|
+| `MASKING_NONCE_KEY` | la **genera el instalador** (≥ 32 caracteres, distinta de las demás, una sola vez) | clave de los marcadores estables por conversación. Sin ella (o más corta) los marcadores son aleatorios por pedido: la protección es la misma, solo rinde menos la caché del proveedor. No reutilizarla como credencial de un modelo; cambiarla cambia los marcadores de las conversaciones en curso. |
+| `MASKING_ANALYSIS_CACHE_ENABLED`, `MASKING_ANALYSIS_CACHE_MAX_ENTRIES`, `MASKING_ANALYSIS_CACHE_TTL_S`, `MASKING_ANALYSIS_CACHE_SALT` | encendida · 20000 · 3600 s · vacío | caché de **detecciones** por segmento (posición, tipo y puntaje; nunca el texto) en la memoria del motor. `MASKING_ANALYSIS_CACHE_ENABLED=false` la apaga; no cambia el resultado. |
+| `MASKING_PDF_MAX_PAGES`, `MASKING_PDF_MAX_BYTES`, `MASKING_PDF_MAX_MEMORY_MB`, `MASKING_PDF_TIMEOUT_S`, `MASKING_PDF_MAX_CONCURRENCY`, `MASKING_PDF_MAX_STREAM_BYTES`, `MASKING_PDF_MAX_TEXT_CHARS`, `MASKING_PDF_MAX_PER_REQUEST`, `MASKING_PDF_REQUEST_DEADLINE_S`, `MASKING_PDF_CACHE_ENTRIES` | 200 · 20 MB · 512 MB · 20 s · 2 · 25 MB · 2 000 000 · 5 · 30 s · 32 | topes de la lectura de PDF con texto cuando el enmascarado es forzado. Un PDF que no se puede leer (escaneado, protegido, corrupto o que supera un tope) **no se envía**: el pedido se bloquea con «no pudo protegerse». Un valor inválido deja el default. |
+| `MASKING_EXEMPT_SYSTEM_PROMPT`, `MASKING_EXEMPT_TOOL_DEFINITIONS` | apagadas (`false`) | exenciones opcionales: el prompt de sistema o las definiciones de herramientas viajan sin analizar. **Encenderlas es una decisión explícita de la instalación** (queda en la auditoría solo el nombre de lo exento); el pedido no puede encenderlas. |
+
+`S14_EXEMPT_POSITIONS` **no es una variable**: es una tabla del código del motor (qué posiciones del pedido no se reescriben); no hay nada que configurar ni que pasar. Las exenciones opcionales de arriba están apagadas por defecto.
+Para cambiar una: agregar la línea en el archivo de entorno (sin cambiar su modo 600) y recrear lo que la lee, con un corte corto:
+
+```bash
+cd ~/Eleia-cli
+set -a; source .env; set +a
+nano "$EXTRA_ENV_FILE"                                 # agregar, p. ej., MASKING_PDF_MAX_PAGES=100; no tocar las líneas existentes
+docker compose up -d --force-recreate engine backend
+```
+
+**Si falla** (el instalador dice cuál; el mensaje es el de `./activar-redirect.sh`)
+
+| Síntoma | Qué hacer |
+|---|---|
+| «ELEA_REDIRECT=1 todavía no se puede activar … (ELEA_EXT_MIN_VERSION) sigue sin fijar» | Es el marcador pendiente: no se publicó todavía el release que lo fija. **No se tocó nada.** Esperar ese release; no editarlo a mano en el servidor. |
+| «ELEA_EXT_VERSION … es anterior al mínimo» o «Falta ELEA_EXT_VERSION» | Usar un tag ≥ al mínimo, con formato `AAAA-MM-DD`. No se tocó nada. |
+| «Falta la dependencia de la vuelta 2 de la base propia del motor (proxy y canal interno cerrado)» | El instalador es viejo o el compose no tiene el proxy: repetir el Paso 2. No se tocó nada. |
+| «/api/v1/internal/identity dio … (se esperaba 404)» | **PARAR y avisar.** El plano interno no está cerrado (o el Guardian no está levantado). No se activa. |
+| «No se pudieron bajar las imágenes -ext» | El tag no existe o las imágenes no se publicaron. No se activa nada: verificar el tag con quien publicó. |
+| «Sin respaldo previo no se activa la extensión» | `./respaldo.sh` falló: ver Paso 1. **No** usar `ELEA_SIN_RESPALDO=1`: sin respaldo no hay nivel 2. |
+| «El motor no terminó de arrancar después de 5 minutos» | `./elea-logs.sh engine`. Si no se resuelve rápido, **nivel 1** del Paso 8 no ayuda (las imágenes `-ext` se conservan): consultar; el recurso seguro es el **nivel 2**. |
+| «El backend no respondió en 3 minutos» (migración de la extensión fallida) | `./elea-logs.sh backend`. **No insistir ni repetir el instalador**: una migración puede haber quedado a medias. Ir al **nivel 2** del Paso 8, salvo que el equipo indique otra cosa. |
+| `/api/v1/redirect/health` da **503** (`region_unresolved` o `region_row_missing`) | Rige el respaldo en código: se rechaza todo lo redirigido; los seeds no se cargaron. `./elea-logs.sh backend`. Lo no redirigido sigue igual. Si no se arregla, **nivel 1**. |
+| `/api/v1/redirect/health` da **404** | La extensión no está montada (imagen `-ext` sin entorno): `docker compose ps backend` y que exista el archivo de `EXTRA_ENV_FILE`. |
+
+### Paso 7 — Verificar con redirección
+
+Sin corte. Hay tres comprobaciones (a, b y c); **todas** tienen que cumplirse, y si una no, nivel 1 del Paso 8.
+
+**a) En el servidor** (el puerto publicado es el del proxy, 8091):
+
+```bash
+cd ~/Eleia-cli
+curl -s -w '\n%{http_code}\n' http://localhost:8091/api/v1/redirect/health                        # 200
+curl -s -H "Authorization: Bearer <LLAVE>" http://localhost:8091/api/v1/gw/v1/models              # los modelos publicados para esa llave
+./migrar-base-motor.sh --verificar                                                                # «OK»
+./elea-logs.sh backend                                                                            # sin errores de arranque ni de migración
+```
+
+**b) Desde OTRA máquina de la LAN/VPN** (no desde el servidor): el plano interno tiene que estar cerrado.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/internal/identity          # 404
+curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/redirect/health            # 200
+```
+
+**c) Una conversación de Claude Code con un dato personal de prueba**, desde la PC de una persona, con una **llave virtual de prueba** (la crea el panel; entregarla por el gestor de contraseñas, nunca por chat):
+
+```bash
+export ANTHROPIC_BASE_URL=http://<servidor>:8091/api/v1/gw
+export ANTHROPIC_AUTH_TOKEN='<LLAVE>'
+claude
+```
+
+Pedirle algo que incluya datos **inventados** (nunca los de una persona real), por ejemplo: «Redactá un saludo para Juana Pérez, DNI 12.345.678, correo juana.perez@example.com, y repetí sus datos al final».
+
+* **Qué se espera.** El dato personal **sale enmascarado** hacia el modelo (seudonimización reversible: el modelo recibe un marcador, no el valor) y **vuelve restaurado** a la persona: la respuesta se lee normal. Que el enmascarado se aplicó se ve en la **auditoría**, que
+  guarda **solo metadatos** (jamás el texto del pedido ni el dato): el id pedido y el destino real, la postura (`default_posture_applied`, `masked_all` por defecto), si el destino estaba en región y el alcance del enmascarado (`masking_scope`).
+  Se mira en el panel (`http://<servidor>:8090`, pantalla de auditoría; nombre exacto `[COMPLETAR-TRAS-T102]`). Con la postura por defecto (`masked_all`) todo lo redirigido sale enmascarado, sea cual sea el destino.
+* Anotar **sin contenido** (fecha, id del modelo, destino, postura, `masking_scope`) como evidencia; no copiar el prompt ni la respuesta.
+
+**Verificar.** (a) la salud en 200, los modelos publicados listados y `--verificar` en `OK`; (b) el plano interno en 404 desde otra máquina; (c) la conversación responde con el dato restaurado y la auditoría muestra la postura y el alcance del enmascarado, sin contenido.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| `/api/v1/internal/identity` **no** da 404 desde otra máquina | **Nivel 1 ya** (Paso 8) y **avisar**: es el requisito de seguridad de la activación. |
+| `/api/v1/redirect/health` no da 200 | Ver la tabla del Paso 6 (503 / 404). |
+| `/api/v1/gw/v1/models` no lista nada | Todavía no hay modelos publicados en «Modelos» para esa llave: es del panel, no del instalador. |
+| 403 «Modelo no disponible para tu región.» | Residencia: el destino está fuera de lo permitido para esa región. Es la política funcionando; Cumplimiento ajusta en «Modelos». En Claude Desktop aparece con «Failed to authenticate» antepuesto: es el texto de esa herramienta, no un error de la llave. |
+| 404 «Modelo no disponible para tu organización.» | El id pedido no está publicado para esa llave. |
+| 400 «El pedido no pudo protegerse…» | El analizador de datos personales no respondió (o un PDF no se pudo leer): `docker compose ps nlp-analyzer` y `./elea-logs.sh engine`. El pedido **no** sale sin proteger: es el comportamiento correcto. |
+| La respuesta trae el dato sin que la auditoría muestre postura/alcance de enmascarado | **Nivel 1** y consultar: la política no se aplicó. |
+
+### Paso 8 — Vuelta atrás en dos niveles
+
+**Cuál elegir.** El **nivel 1** *apaga* la extensión: minutos, sin tocar datos. El **nivel 2** *vuelve a las imágenes base* y **solo** se puede con el respaldo previo a la activación (el del Paso 6): con las migraciones de la
+extensión aplicadas, volver a una imagen sin la extensión **no está soportado** (la imagen base fallaría al arrancar por revisiones desconocidas en la base). **Sin el respaldo previo no hay nivel 2.**
+Nunca: `docker compose down -v`, borrar volúmenes, borrar las copias de `respaldos/`, ni restaurar solo algunas tablas.
+
+#### Nivel 1 — apagar
+
+1. En el panel («Modelos»), dejar la política **Apagada** para el alcance: los pedidos vuelven al camino de siempre.
+2. Sacar la variable y correr el instalador:
+
+```bash
+cd ~/Eleia-cli
+unset ELEA_REDIRECT
+sed -i '/^ELEA_REDIRECT=/d' .env
+./install.sh
+```
+
+`./activar-redirect.sh` ve la activación anterior, **quita `GATEWAY_PLUGINS` y `PLUGIN_PACKAGES`** del entorno de la extensión y recrea motor y backend. **Conserva** la imagen `-ext` del backend (y la del panel y el motor) y
+`ALEMBIC_EXTRA_VERSION_LOCATIONS`: con las migraciones ya aplicadas, la imagen base no arranca (el `upgrade head` falla por revisiones desconocidas).
+
+**Verificar.** `/api/v1/redirect/health` pasa a **404** (lo esperado: las rutas de la extensión desaparecen); `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8091/health` da 200; `/api/v1/gw/v1/models` y una pregunta del Hub responden como antes;
+`./migrar-base-motor.sh --verificar` da `OK`. Para volver a encender: poner otra vez `ELEA_REDIRECT=1` (Paso 6).
+
+**Si falla.** `./install.sh` dice `Falta el archivo de entorno de la extensión`: el archivo de `EXTRA_ENV_FILE` no está; no inventarlo, ir al nivel 2. Si el backend no arranca después de apagar: `./elea-logs.sh backend` y, si no se resuelve, nivel 2.
+
+#### Nivel 2 — volver a las imágenes base
+
+**Solo** restaurando el respaldo previo a la activación (`~/respaldo-previo-a-la-activacion.txt`, Paso 6). **Se pierde todo lo que pasó después de ese respaldo** (usuarios, llaves, auditoría, gasto). Nada se borra: la base con la extensión se
+**renombra**, no se elimina. El cambio de nombre y el arranque con las imágenes base **no se probaron con contenedores reales**. Tres bloques, **uno por vez**, y no pasar al siguiente si el anterior no terminó bien.
+
+**A.** Un respaldo del estado actual (por si hay que deshacer esto) y la restauración en una base **aparte** (no toca la actual):
+
+```bash
+cd ~/Eleia-cli
+set -a; source .env; set +a
+./respaldo.sh && D=$(cat ~/respaldo-previo-a-la-activacion.txt) && echo "$D" && [ -d "$D" ] && (cd "$D" && sha256sum -c SHA256SUMS) && \
+docker exec elea-db psql -U "$POSTGRES_USER" -d postgres -c 'CREATE DATABASE elea_gateway_restaurada' && \
+docker exec -i elea-db pg_restore -U "$POSTGRES_USER" -d elea_gateway_restaurada --no-owner --exit-on-error < "$D/elea_gateway.dump" && \
+echo "RESTAURACIÓN OK: seguir con el bloque B" || echo "FALLÓ: NO seguir con el bloque B"
+```
+
+**B.** Solo si A dijo `RESTAURACIÓN OK`: parar los servicios y cambiar los nombres (la base con la extensión queda guardada como `elea_gateway_con_extension`):
+
+```bash
+docker compose stop api-proxy frontend client tabular presenton anythingllm backend engine && \
+docker exec elea-db psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+  -c 'ALTER DATABASE "elea_gateway" RENAME TO "elea_gateway_con_extension"' \
+  -c 'ALTER DATABASE "elea_gateway_restaurada" RENAME TO "elea_gateway"'
+```
+
+**C.** Sacar del instalador todo lo de la extensión (en `.env` y en esta sesión) y volver a las imágenes base:
+
+```bash
+sed -i -E '/^(ELEA_REDIRECT|ELEA_EXT_VERSION|COMPOSE_FILE|EXTRA_ENV_FILE|ELEA_REDIRECT_ACTIVADA|ELEA_REDIRECT_CATALOGO|BACKEND_EXT_IMAGE|FRONTEND_EXT_IMAGE|ENGINE_EXT_IMAGE)=/d' .env
+unset ELEA_REDIRECT ELEA_EXT_VERSION COMPOSE_FILE EXTRA_ENV_FILE ELEA_REDIRECT_ACTIVADA ELEA_REDIRECT_CATALOGO BACKEND_EXT_IMAGE FRONTEND_EXT_IMAGE ENGINE_EXT_IMAGE
+./install.sh                                           # sin las variables, compose vuelve a ver solo docker-compose.yml: imágenes base
+```
+
+La extensión solo agrega tablas a la base del Guardian: la base del motor (`elea_engine`) no se restaura (el motor `-ext` deriva del mismo digest del motor base). Cuando todo ande, el archivo de entorno de la extensión
+(`~/.config/elea/redirect.env`) se borra a mano y, si más adelante se vuelve a activar, se generan llaves nuevas. La base `elea_gateway_con_extension` se borra solo por decisión de una persona (`DROP DATABASE`, con copia previa).
+
+**Verificar.** `docker inspect --format '{{.Name}} {{.Config.Image}}' elea-engine elea-backend elea-frontend` ya **no** muestra `-ext` en el backend ni en el panel (el motor vuelve a su digest fijado);
+`/api/v1/redirect/health` da 404; `/health` da 200; `./migrar-base-motor.sh --verificar` da `OK`; el Hub responde y los usuarios que existían **antes** del respaldo entran.
+
+**Si falla**
+
+| Síntoma | Qué hacer |
+|---|---|
+| El bloque A falla (copia ilegible, `CREATE DATABASE` o `pg_restore` con error) | **No seguir.** Nada cambió en la base actual (la restauración fue a una base aparte). Si quedó `elea_gateway_restaurada` a medias, es una base de prueba: consultar antes de borrarla. |
+| El bloque B falló en el segundo `ALTER` (queda sin `elea_gateway`) | Deshacer el primero **ya**: `docker exec elea-db psql -U "$POSTGRES_USER" -d postgres -c 'ALTER DATABASE "elea_gateway_con_extension" RENAME TO "elea_gateway"'`, y consultar. |
+| El backend con imágenes base no arranca después del bloque C | La restauración no quedó donde se esperaba: `./elea-logs.sh backend`; el estado anterior está en `elea_gateway_con_extension` y en la copia del bloque A (`respaldos/`). Consultar antes de tocar nada más. |
+| No hay respaldo previo a la activación | No hay nivel 2. Quedarse en el nivel 1 y consultar al equipo. |
 
 ## Usuario de cumplimiento (`super_admin`)
 
@@ -450,6 +918,9 @@ con los modelos de Azure de Elea que Cumplimiento publica en el panel («Modelos
 > mensaje que lo explica. El release que publica las imágenes `-ext` reemplaza ese valor por la fecha de su publicación (AAAA-MM-DD),
 > por PR, en `install.sh`. Un valor puesto en `.env` no la baja.
 
+> **Servidor de Elea (consola web por VPN):** el orden completo y con guardas para pegar —respaldo, separar la base del motor, usuario de cumplimiento, verificación sin redirección, activar,
+> verificar y los dos niveles de vuelta atrás— está en «Actualizar el servidor de Elea (057 + bases separadas)». Esta sección es la referencia de la extensión.
+
 ### Antes de activar
 
 El instalador comprueba tres condiciones y, si falta alguna, **no toca nada** y termina con un error que la explica:
@@ -675,6 +1146,7 @@ bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
 bash tests/test-redirect-optin.sh    # extensión de redirección: opt-in, imágenes -ext, entorno 600, gate, salud, apagar (Docker y curl simulados)
 bash tests/test-runbook-redirect.sh  # runbook de la extensión: respaldo, activar, verificar, configurar herramientas, vuelta atrás
+bash tests/test-runbook-actualizar.sh  # runbook consolidado de actualización (057 + bases separadas): pasos 0 a 8, comandos que existen, marcadores
 ELEA_CADDY_BIN=/ruta/a/caddy bash tests/test-proxy.sh   # si `caddy` no está en el PATH
 docker compose config -q         # el compose es válido con tu .env
 ```

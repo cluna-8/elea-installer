@@ -221,6 +221,70 @@ activar "${ACTIVA[@]}" "ELEA_REDIRECT_ENV_FILE=$R/ext.env"
 chequear "una ruta DENTRO del repo se rechaza (el repo se versiona)" bash -c '[ "$1" != 0 ] && [ ! -e "$2/ext.env" ] && [ ! -s "$3" ]' _ "$rc" "$R" "$FAKE_LOG"
 
 # ───────────────────────────────────────────────────────────────────────────────────────────────
+echo "— T103: variables de enmascarado que agregó la 057 (MASKING_*): llegan al motor y al backend, o rige su default seguro"
+# Lista de .env.example de la rama de integración de la 057 (repo elea). Son OPCIONALES salvo MASKING_NONCE_KEY (la genera
+# el instalador): el motor las lee del entorno en cada pedido y con un valor ausente o inválido rige el default de la línea.
+# S14_EXEMPT_POSITIONS NO es una variable: es una tabla del código del motor (posiciones del pedido que no se reescriben);
+# lo único que se enciende por entorno son las exenciones opcionales MASKING_EXEMPT_* (apagadas por defecto).
+OPCIONALES=(MASKING_ANALYSIS_CACHE_ENABLED MASKING_ANALYSIS_CACHE_MAX_ENTRIES MASKING_ANALYSIS_CACHE_TTL_S MASKING_ANALYSIS_CACHE_SALT
+  MASKING_PDF_MAX_PAGES MASKING_PDF_MAX_BYTES MASKING_PDF_MAX_MEMORY_MB MASKING_PDF_TIMEOUT_S MASKING_PDF_MAX_CONCURRENCY
+  MASKING_PDF_MAX_STREAM_BYTES MASKING_PDF_MAX_TEXT_CHARS MASKING_PDF_MAX_PER_REQUEST MASKING_PDF_REQUEST_DEADLINE_S
+  MASKING_PDF_CACHE_ENTRIES MASKING_EXEMPT_SYSTEM_PROMPT MASKING_EXEMPT_TOOL_DEFINITIONS)
+nuevo_entorno
+activar "${ACTIVA[@]}"
+chequear "termina bien" [ "$rc" = 0 ]
+for k in "${OPCIONALES[@]}"; do
+  chequear_no "el instalador no escribe $k en el entorno (rige el default seguro del motor; el operador lo agrega si lo necesita)" grep -q "^$k=" "$(ENVF)"
+done
+chequear_no "ninguna exención opcional queda encendida (MASKING_EXEMPT_*=1|true|yes|on): todo se analiza" grep -Eiq '^MASKING_EXEMPT_[A-Z_]*=(1|true|yes|on)$' "$(ENVF)"
+chequear "MASKING_NONCE_KEY es distinta de REDIRECT_INTERNAL_KEY (la clave de los marcadores no se reutiliza)" bash -c '
+  a=$(grep "^MASKING_NONCE_KEY=" "$1" | cut -d= -f2-); b=$(grep "^REDIRECT_INTERNAL_KEY=" "$1" | cut -d= -f2-)
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" != "$b" ]' _ "$(ENVF)"
+# Lo que ve cada servicio: el entorno del archivo de la extensión + `environment:` del compose (este último GANA). Si el
+# compose definiera alguna de estas variables, pisaría la del operador; no tiene que definir ninguna.
+efectivo() { # $1 = servicio, $2 = archivo de entorno; imprime KEY=VALOR del entorno que vería el contenedor
+  ELEA_EXT_VERSION=$VERSION EXTRA_ENV_FILE="$2" python3 "$RENDER" --redirect | python3 -c '
+import json, sys
+svc = json.load(sys.stdin)["services"][sys.argv[1]]
+env = {}
+for e in svc.get("env_file", []):
+    path = e["path"] if isinstance(e, dict) else e
+    try:
+        for ln in open(path):
+            if "=" in ln and not ln.lstrip().startswith("#"):
+                k, v = ln.rstrip("\n").split("=", 1); env[k] = v
+    except OSError:
+        pass
+e = svc.get("environment", [])
+for it in (e if isinstance(e, list) else [f"{k}={v}" for k, v in e.items()]):
+    k, _, v = it.partition("="); env[k] = v
+for k, v in sorted(env.items()):
+    print(f"{k}={v}")' "$1"
+}
+cp "$(ENVF)" "$T/operador.env"
+printf 'MASKING_PDF_MAX_PAGES=50\nMASKING_ANALYSIS_CACHE_ENABLED=false\nMASKING_EXEMPT_SYSTEM_PROMPT=true\nMASKING_ANALYSIS_CACHE_SALT=sal-de-prueba\n' >> "$T/operador.env"
+for S in engine backend; do
+  ef=$(efectivo "$S" "$T/operador.env")
+  for k in MASKING_PDF_MAX_PAGES=50 MASKING_ANALYSIS_CACHE_ENABLED=false MASKING_EXEMPT_SYSTEM_PROMPT=true MASKING_ANALYSIS_CACHE_SALT=sal-de-prueba; do
+    chequear "lo que el operador agrega a la extensión llega al $S tal cual ($k)" grep -qxF "$k" <<<"$ef"
+  done
+  chequear "MASKING_NONCE_KEY y REDIRECT_INTERNAL_KEY llegan al $S (el motor y el backend las derivan por separado)" \
+    bash -c 'grep -q "^MASKING_NONCE_KEY=." <<<"$1" && grep -q "^REDIRECT_INTERNAL_KEY=." <<<"$1"' _ "$(efectivo "$S" "$(ENVF)")"
+  for k in "${OPCIONALES[@]}"; do
+    chequear_no "el compose no define $k en el $S (pisaría la del operador)" bash -c 'grep -q "^$1=" <<<"$2" && ! grep -q "^$1=" "$3"' _ "$k" "$(efectivo "$S" "$(ENVF)")" "$(ENVF)"
+  done
+done
+chequear "SENTINEL_ENTITY_REGION del compose y de la extensión coinciden (latam_ar): ninguna pisa a la otra con otro valor" bash -c '
+  [ "$(grep "^SENTINEL_ENTITY_REGION=" "$1" | cut -d= -f2-)" = latam_ar ] && [ "$(grep -c "SENTINEL_ENTITY_REGION=\${ENTITY_REGION:-latam_ar}" "$2")" = 2 ]' _ "$(ENVF)" "$AQUI/docker-compose.yml"
+echo "REDIRECT_CRED_PRUEBA=del-operador" >> "$T/operador.env"
+cp "$T/operador.env" "$(ENVF)"
+activar "${ACTIVA[@]}"
+chequear "una segunda activación conserva lo que el operador puso (MASKING_PDF_*, MASKING_ANALYSIS_CACHE_*, MASKING_EXEMPT_*)" bash -c '
+  [ "$1" = 0 ] && for k in MASKING_PDF_MAX_PAGES=50 MASKING_ANALYSIS_CACHE_ENABLED=false MASKING_EXEMPT_SYSTEM_PROMPT=true MASKING_ANALYSIS_CACHE_SALT=sal-de-prueba; do grep -qxF "$k" "$2" || exit 1; done' _ "$rc" "$(ENVF)"
+chequear "…y no duplica MASKING_NONCE_KEY" bash -c '[ "$(grep -c "^MASKING_NONCE_KEY=" "$1")" = 1 ]' _ "$(ENVF)"
+chequear "la exención opcional puesta por el operador no la apaga ni la repite el instalador" bash -c '[ "$(grep -c "^MASKING_EXEMPT_SYSTEM_PROMPT=" "$1")" = 1 ]' _ "$(ENVF)"
+
+# ───────────────────────────────────────────────────────────────────────────────────────────────
 echo "— T100 gate de la dependencia (proxy y S15 de la vuelta 2): no se activa si falta alguna condición"
 verifica_sin_activar() { # $1 = descripción; esperado: error, nada escrito, nada recreado, sin respaldo
   chequear "$1: termina con error" [ "$rc" != 0 ]
