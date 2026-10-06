@@ -12,8 +12,8 @@ El resto de este documento es el registro del ensayo y **no se reescribe**; acá
 
 | Punto | Estado | Dónde |
 |---|---|---|
-| §5 `/api/v1/internal/*` alcanzable por `8091` | **Cerrado en el instalador, solo con pruebas sin Docker.** El backend ya no publica puertos; `api-proxy` (Caddy fijado por digest) publica `8091` y responde 404 a todo camino con un segmento `internal` (con o sin secreto, mayúsculas, `//`, `..`, letras codificadas); lo demás pasa. `INTERNAL_ALLOWED_CIDRS=auto` en el backend (la capa de origen la implementa el backend, no este repo). | `docker-compose.yml` (`api-proxy`, `backend`), `proxy/Caddyfile`, `tests/test-proxy.sh` (corre un Caddy real contra un backend de mentira si hay binario), README «Proxy de la API». **No se levantó el compose ni se repitió el §5 con contenedores**: queda para el ensayo con Docker. |
-| 6.1 «volver a separar» no funcionaba | **Arreglado.** `./migrar-base-motor.sh --volver-a-separar` (pide `SEPARAR`); el comando pelado en ese estado se niega con un mensaje verdadero; la vuelta B anota la base que se separó; la base vieja se renombra, no se borra. | `migrar-base-motor.sh`, `tests/test-base-motor.sh` («volver a separar…»: el comando sale del texto del propio script y se ejecuta de punta a punta contra el Docker simulado), README. Sin ensayo con contenedores reales. |
+| §5 `/api/v1/internal/*` alcanzable por `8091` | **Cerrado en el instalador, solo con pruebas sin Docker.** El backend ya no publica puertos; `api-proxy` (Caddy fijado por digest) publica `8091` y responde 404 a todo camino con un segmento `internal` (con o sin secreto, mayúsculas, `//`, `..`, letras codificadas); lo demás pasa. `INTERNAL_ALLOWED_CIDRS=auto` en el backend (la capa de origen la implementa el backend, no este repo). | `docker-compose.yml` (`api-proxy`, `backend`), `proxy/Caddyfile`, `tests/test-proxy.sh` (corre un Caddy real contra un backend de mentira si hay binario), README «Proxy de la API». **Verificado con contenedores reales en la sección 9** (2026-10-06): 404 desde afuera, con y sin la llave; desde adentro funciona. |
+| 6.1 «volver a separar» no funcionaba | **Arreglado.** `./migrar-base-motor.sh --volver-a-separar` (pide `SEPARAR`); el comando pelado en ese estado se niega con un mensaje verdadero; la vuelta B anota la base que se separó; la base vieja se renombra, no se borra. | `migrar-base-motor.sh`, `tests/test-base-motor.sh` («volver a separar…»: el comando sale del texto del propio script y se ejecuta de punta a punta contra el Docker simulado), README. **Ensayado con contenedores reales en la sección 9** (migrar → vuelta atrás B → volver a separar). |
 | 6.2 el gate de `elea` cuelga sin Postgres | **Abierto, fuera de este repo** (`tests/migration_harness.py`, gate de `elea`). | repo `elea` |
 | 6.3 `make docs-refs` ensucia `openapi.json` | **Abierto, fuera de este repo** (`deploy/Makefile`). | repo `elea` |
 | 6.4 el motor cachea pedidos idénticos | **Documentado**: la prueba funcional del README pide un texto distinto por pregunta. No es un cambio de comportamiento. | README, «Prueba funcional» |
@@ -255,3 +255,162 @@ que construyó el ensayo. Se dejaron: las imágenes públicas (motor, backend, n
 la PC) y las etiquetas `sentinel-docs:prod|wl-base|wl-aegis` que reconstruye `check-docs` (nombres compartidos con
 otros worktrees; reconstruirlas es parte del gate). Los contenedores `eleae2e-*` y los volúmenes `elea_*` /
 `eleae2e_*` (de otros ensayos) no se tocaron. `git status` de la rama de elea: limpio.
+
+## 9. Segunda ronda con contenedores reales: el proxy y «volver a separar» (rama `cluna-8/fix-separar-bases-motor-2`, HEAD `bb6ef60`)
+
+Fecha 2026-10-06. Rama del instalador `cluna-8/fix-separar-bases-motor-2` (HEAD `bb6ef60`); la rama de elea
+(`fix-separar-bases-elea-2`, HEAD `b52f69b`) solo se leyó para citar código: no se tocó. Docker 28.4.0 / Compose
+v2.39.2, la misma PC (4 CPU, 11 GB; 2,3–4,1 GB disponibles durante el ensayo). **Veredicto: (a) y (b) pasan.**
+El ensayo no encontró fallas nuevas del instalador; sí **3 puntos a saber** (9.5).
+
+### 9.1 Cómo se hizo (y qué NO es idéntico a una instalación completa)
+
+- Proyecto aislado `ensayobases` (`COMPOSE_PROJECT_NAME`), carpetas temporales fuera del repo, **un stack a la vez**,
+  cada uno terminó con `docker compose down -v --remove-orphans`. Los scripts bajo prueba son los de la rama, sin
+  cambios (`install.sh`, `migrar-base-motor.sh`, `respaldo.sh`, `base-motor.lib.sh`, `proxy/Caddyfile`).
+- **Sin descargas**: un envoltorio de `docker` dejó pasar todo salvo `compose pull` (se omite) y los servicios
+  `anythingllm`, `tabular` y `presenton` (se omiten en `up/stop`; `docker exec elea-anythingllm …` se simula). Las
+  imágenes son las que ya estaban en la PC: motor `…@sha256:1928af9d…` (el digest fijado en `docker-compose.yml:75`),
+  backend `:latest` = `sha256:7cf1910a…` (creada el **2026-09-21**), `caddy:2-alpine@sha256:5f5c8640…` (el de
+  `docker-compose.yml:177`), panel `:latest` y Hub `:latest` (2026-09-21). Quedan **sin probar** `anythingllm`,
+  `tabular` y `presenton`.
+- **Incidente del envoltorio (mío, sin efecto en los resultados):** al levantar el panel a mano (`docker compose up -d
+  frontend`) el envoltorio le quitó el nombre «frontend» y quedó un `up -d` sin servicios, que levantó **todos**,
+  incluidos `anythingllm`, `tabular` y `presenton`. Los vi en `docker ps` de la verificación A5 de la fase 1, los paré
+  con `docker compose stop` en ~1 min y el envoltorio ya no deja `up`/`stop` sin servicios. Nunca hubo dos stacks.
+- Credenciales de Azure: tomadas de `…/elea/.env` y escritas en el `.env` temporal del ensayo; no se imprimieron
+  ni están acá. Los scripts de verificación solo imprimen códigos y conteos, jamás una llave.
+- El panel se levantó (había 2,1 GB disponibles; el criterio era >1,5 GB) y el Hub también.
+- **Pedido al gateway**, desde el host, por el puerto publicado: `POST http://localhost:8091/api/v1/gw/v1/messages`,
+  formato Anthropic, cabeceras `x-api-key: <llave svc.anythingllm-provider>` + `anthropic-version: 2023-06-01`,
+  `model=azure-gpt-5.4-mini`, `max_tokens=16`, un mensaje con sufijo aleatorio (el motor cachea pedidos idénticos,
+  ver 6.4). La ruta es `backend/src/api/gateway.py:1636` (`/gw/v1/messages`) y la llave `sk-sentinel-…` en una cabecera
+  de auth lo manda al motor (`_detect_mode_and_key`, `gateway.py:1249`).
+
+### 9.2 Fase (a) — instalación nueva con el instalador nuevo (`./install.sh`, dos corridas)
+
+`./install.sh` 2.ª corrida: **1 min 41 s**, rc 0. `elea_gateway` 21 tablas (0 del motor), `elea_engine` 66 tablas;
+motor con `DATABASE_URL` → `elea_engine` y `SENTINEL_IDENTITY_URL=http://backend:8000/api/v1/internal/identity`
+(`docker-compose.yml:86`); login `admin` 200; las tres llaves `svc.*` → `/v1/models` 200·200·200.
+
+**Desde afuera** (host, `http://localhost:8091`, el único puerto de la API publicado): 12 caminos × {sin cabecera,
+cabecera incorrecta, `X-Sentinel-Internal: <ENGINE_MASTER_KEY>`} = 36 pedidos, **todos 404**:
+
+| Camino (GET) | sin cab. | cab. mala | con la llave |
+|---|---|---|---|
+| `/api/v1/internal/identity` · `/audit/probe` · `/verify-user` · `/audit` | 404 | 404 | **404** |
+| `/api/v1/INTERNAL/identity` (mayúsculas) · `/api/v1//internal/identity` · `//api/v1/internal/identity` | 404 | 404 | **404** |
+| `/api/v1/x/../internal/identity` (`--path-as-is`) · `/api/v1/%69nternal/identity` (letra codificada) | 404 | 404 | **404** |
+| `/api/v1/internal` · `/api/v1/internal/` · `/internal/identity` | 404 | 404 | **404** |
+| `POST /api/v1/internal/audit` con la llave | — | — | **404** |
+
+Control (lo demás pasa): `/health` 200, `/docs` 200, `POST /api/v1/users/login` con cuerpo vacío 422. Antes, con el
+instalador anterior (backend publicado directo), el mismo pedido con la llave daba **`identity` 422 y `audit/probe` 200**
+desde afuera (visto en la instalación vieja de la fase 2, antes de actualizar): el §5 queda cerrado.
+Esos 36 pedidos **no llegaron al backend**: su log solo registra los 11 pedidos hechos desde adentro o por la IP
+interna (`identity` 404×2 y 422×2, `audit/probe` 404×2 y 200×2, `verify-user` 404×2 y 422×1) y el tráfico real del motor (abajo), ni uno más.
+
+**Desde adentro** (contenedor del motor → `http://backend:8000`, sin pasar por el proxy):
+
+| GET | sin cab. | cab. mala | con la llave |
+|---|---|---|---|
+| `/api/v1/internal/identity` | 404 | 404 | **422** (llegó al endpoint: falta `key_hash`) |
+| `/api/v1/internal/audit/probe` | 404 | 404 | **200** |
+| `/api/v1/internal/verify-user` | 404 | 404 | **422** |
+
+Y en uso real: el backend registró del motor `GET /internal/identity` 200 ×3 (una por llave `svc.*`) y `POST
+/internal/audit` 200 ×1 (la fila del pedido de abajo).
+
+**Gateway desde afuera:** `POST /api/v1/gw/v1/messages` → **HTTP 200**, 3,7 s, `type=message`, `stop_reason=end_turn`,
+`usage` 19 entrada + 4 salida; `audit_logs` 2 → **3** (fila `gpt-5.4-mini`, `compliance=passed`, `cost_usd=0,000032`).
+**Panel** `:8090` 200 (servidor de desarrollo del panel, `npm run dev`), **Hub** `:8095` 200; `:8097/templates` 403 sin
+sesión (es lo previsto: solo admins con sesión, `docker-compose.yml`, comentario del puerto 8097). Puertos publicados al
+host: `8091` (`elea-api-proxy`), `8090` (panel), `8095` y `8097` (Hub); **`elea-backend` publica 0** (`docker port` vacío).
+
+Bajada: `down -v --remove-orphans` en 26 s.
+
+### 9.3 Fase (b) — instalación vieja → migrar → vuelta atrás B → volver a separar
+
+Instalación **vieja** con el instalador anterior (`git archive 9754f13`): `./install.sh` 1 min 31 s; `elea_gateway` **87
+tablas** (21 + 66 del motor), `elea_engine` no existe; `users=4`, `api_keys=3`, `audit_logs=3`, `alembic=199fe429762a`;
+motor sobre `…engine:latest` con `DATABASE_URL` → `elea_gateway`; `--detectar` → **0**; `--inventario` → litellm
+**1.92.0 / 0.4.74** (la misma que el análisis). Pedido a `azure-gpt-5.4-mini` por el gateway: HTTP 200, 3,6 s, `audit_logs` 2 → 3.
+
+| Paso | Comando | Duración | Resultado verificado |
+|---|---|---|---|
+| **Migrar** (actualización: se pisan los archivos con los de la rama y se conserva el `.env`) | `printf 'MIGRAR\n' \| script -qec ./install.sh /dev/null` | **2 min 48 s** (motor parado ~155 s) | «COMPUERTA OK: 66 tablas, mismas filas, mismas llaves y gasto, 0 tablas ajenas»; los 16 pasos; `--detectar` → **3**; marca `separada-de:elea_gateway:2026-10-06`; `.env`: `ENGINE_DB=elea_engine`, sin URL vacías |
+| Verificar | `./migrar-base-motor.sh --verificar` | 1–2 s | **OK**: 0 ajenas, misma fotografía, `alembic_version` igual, las 3 llaves 200 |
+| **Vuelta atrás B** | `printf 'VOLVER\n' \| script -qec "./migrar-base-motor.sh --vuelta-atras" /dev/null` | **59 s** | motor `healthy` sobre `elea_gateway`; `.env`: `ENGINE_DB=elea_gateway`, `ENGINE_IDENTITY_URL=`, `ENGINE_AUDIT_URL=`, `ENGINE_IMAGE=…@sha256:1928af9d…`; llaves 200·200·200; `elea_engine` sigue con 66 tablas |
+| Comando pelado tras la vuelta B | `./migrar-base-motor.sh` | — | **se niega (rc 1)** con un mensaje verdadero: «El motor está sobre la base compartida elea_gateway (vuelta atrás B activa o .env viejo), no separado. Para separarlo otra vez: ./migrar-base-motor.sh --volver-a-separar» (`migrar-base-motor.sh:176`). El 6.1 de este documento («dice que ya está separada») **ya no ocurre** |
+| `--volver-a-separar --dry-run` | | 0 s | los 16 pasos, y en el 9: «si `elea_engine` existe con tablas… RENAME TO `elea_engine_vieja_<fecha>` # se conserva, no se borra» (`migrar-base-motor.sh:274`) |
+| **Volver a separar** | `printf 'SEPARAR\n' \| script -qec "./migrar-base-motor.sh --volver-a-separar" /dev/null` | **2 min 20 s** (motor parado ~138 s) | la base vieja quedó como `elea_engine_vieja_20261006135837` (66 tablas, **no se borró**); «COMPUERTA OK: 66 tablas…»; `--detectar` → **3**; `--verificar` **OK** con las 3 llaves 200 |
+
+Estado de los datos en cada punto (`users` / `api_keys` / `alembic`, `elea_gateway` siempre **87 tablas**):
+
+| Punto | `users` · `api_keys` · `alembic` | `audit_logs` | `elea_engine` | `ENGINE_DB` / identidad |
+|---|---|---|---|---|
+| Vieja | 4 · 3 · `199fe429762a` | 3 | no existe | `elea_gateway` / SQL |
+| Migrada | 4 · 3 · `199fe429762a` | 4 (+1 `license_evidence`, no tráfico) → 5 con el pedido | 66 tablas, 0 ajenas, 6 llaves | `elea_engine` / HTTP |
+| Vuelta B | 4 · 3 · `199fe429762a` | 5 → **6** con el pedido (por SQL: no hubo `POST /internal/audit`) | 66, intacta | `elea_gateway` / SQL (URL vacías) |
+| Vuelta a separar | 4 · 3 · `199fe429762a` | 6 → **7** con el pedido | 66, 0 ajenas; la vieja renombrada aparte | `elea_engine` / HTTP |
+
+**(a) repetido en los tres estados con el instalador nuevo** (migrada, tras la vuelta B, tras volver a separar), mismos
+36 + 1 pedidos desde afuera: **todos 404**, con y sin llave; desde adentro `identity` 404/404/422, `audit/probe`
+404/404/200, `verify-user` 404/404/422 en los tres; `/health` 200; pedido Anthropic por el gateway desde afuera
+**HTTP 200** en los tres (24 s el primero tras migrar, con el backend recién recreado y el motor en frío; 3,1 s y 3,0 s después;
+19–22 tokens de entrada y 4 de salida). Panel `:8090` y Hub `:8095` 200 en los tres. En el estado «vuelta B» el
+plano interno sigue cerrado desde afuera aunque el motor ya no lo use (URL vacías): el proxy no depende de eso.
+
+**Gasto por llave** (`--gasto`, ≥ 70 s después de cada pedido):
+
+| Punto | `anythingllm-provider` en la base del motor |
+|---|---|
+| Migrada (pedido de antes + pedido de después) | 6,75e-05 (2 filas en `LiteLLM_SpendLogs`) |
+| Vuelta B (la base compartida: no tiene el pedido hecho sobre `elea_engine`) | `elea_gateway` 6,525e-05 (2 filas: el de antes de migrar + el de la vuelta B) |
+| Vuelta a separar | **9,75e-05** (3 filas) |
+
+Es el comportamiento del runbook: el gasto contado en `elea_engine` entre «migrar» y «vuelta B» **no vuelve a la base
+compartida**; sigue entero en la base vieja renombrada (`elea_engine_vieja_…`: 2 filas, 6,75e-05). La auditoría no se pierde.
+
+Bajada: `down -v --remove-orphans` en 27 s.
+
+### 9.4 Qué cierra este ensayo del seguimiento
+
+| Punto | Estado |
+|---|---|
+| §5 `/api/v1/internal/*` alcanzable por `8091` | **Cerrado y verificado con contenedores**: 404 desde afuera con y sin la llave, en los cuatro estados (nueva, migrada, vuelta B, vuelta a separar); desde adentro funciona (identidad y auditoría del motor) |
+| 6.1 «volver a separar» | **Verificado de punta a punta con contenedores**, incluido el mensaje del comando pelado y que la base vieja se renombra |
+| 6.2, 6.3 | Siguen abiertos, fuera de este repo (no se corrieron las suites de elea: no cambió código) |
+| 6.4 | Visto otra vez: con un texto único por pedido, los 5 pedidos del ensayo (uno por estado y la instalación vieja) sumaron gasto |
+
+### 9.5 Tres cosas a saber (no se arreglaron)
+
+1. **La capa 2 (`INTERNAL_ALLOWED_CIDRS=auto`, `docker-compose.yml:155`) no actúa con la imagen publicada del backend.**
+   Esa variable solo existe en el código de la rama de elea (`backend/src/api/internal.py:138`, `b52f69b`); la imagen
+   `:latest` de la PC (2026-09-21) no la trae (`grep -r INTERNAL_ALLOWED_CIDRS /app/src` dentro de la imagen: 0
+   resultados). Prueba: desde el host, por la IP interna del contenedor del backend (`:8000`, que el host sí alcanza
+   por el puente), `GET /internal/identity` con la llave dio **422** y `audit/probe` **200**. No es un hueco de la LAN
+   (el backend no publica ningún puerto y esa IP solo se alcanza desde el propio equipo Docker), pero **hoy la
+   defensa es el proxy (capa 3) más no publicar el 8000**; la capa 2 queda para cuando se publique un backend que la traiga.
+2. **El panel responde 200, pero es el servidor de desarrollo** (`docker-compose.yml:199`, puerto 5173 → 8090): solo se
+   comprobó el código HTTP de `/`, no que el panel funcione contra la API ni el Hub contra AnythingLLM (omitido).
+3. **`test-proxy.sh` sigue sin correr el Caddy real en una máquina sin el binario** (`salta no hay binario caddy`); este
+   ensayo sí lo corrió, en su contenedor (`caddy:2-alpine@sha256:5f5c8640…`), con el `proxy/Caddyfile:21-22` de la rama
+   (`@interno path_regexp "(?i)(^|/)internal(/|$)"` → `respond @interno 404`) y `reverse_proxy backend:8000` (`:25`).
+
+### 9.6 Qué NO se probó en esta ronda
+
+`anythingllm` / `tabular` / `presenton` (omitidos; AnythingLLM simulado) y el corte/arranque de esos servicios dentro del
+migrador; el flujo del Hub contra AnythingLLM; las vueltas atrás **A** y **C**; una base de producción real; M4. Las
+imágenes no se volvieron a bajar del registro (`compose pull` se omitió): el ensayo corrió con las de la PC, que son las
+que ya estaban allí (el digest del motor, el de Caddy y el backend/panel/Hub del 2026-09-21).
+Suites sin Docker corridas al terminar: `bash tests/test-base-motor.sh` → **TODO OK**; `bash tests/test-proxy.sh` → **TODO OK**
+(el Caddy real se salta por falta de binario; ver arriba); `bash -n` de los 4 scripts OK. No cambió código: las suites del
+backend, del panel y del Hub no se corrieron.
+
+### 9.7 Restos de Docker
+
+`down -v --remove-orphans` al terminar cada stack: **0 contenedores `elea-*`, 0 volúmenes y 0 redes** de `ensayobases`, y
+ningún puerto 8090/8091/8095/8097 en escucha. Los 6 contenedores `eleae2e-*` que ya estaban (de otros ensayos) no se tocaron.
+No se descargó ninguna imagen ni se creó ninguna. Se borraron las carpetas temporales con los `.env`, los volcados y los
+respaldos, y los `/tmp/elea_svc_*.json` que escribe `install.sh` (contenían llaves).
