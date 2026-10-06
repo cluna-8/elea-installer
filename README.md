@@ -12,8 +12,10 @@ código fuente del Guardian, solo la configuración para levantarlo.
 
 Primera corrida: genera `.env` con secretos y te pide completar las credenciales del
 modelo (Azure OpenAI). Completalas y volvé a correr `./install.sh` — esa segunda vez
-levanta todo, crea el usuario admin, conecta AnythingLLM al motor y te muestra la
-contraseña de admin generada.
+levanta todo, crea el usuario admin, crea el usuario de cumplimiento (solo en una
+instalación nueva, ver «Usuario de cumplimiento»), conecta AnythingLLM al motor y te muestra
+la contraseña de admin generada. La del usuario de cumplimiento se muestra **una sola vez**,
+en el momento en que se crea: copiala entonces.
 
 Repo e imágenes públicos (desde el 14-sep-2026): no hace falta ningún token. Solo si la
 descarga de imágenes fallara, el script pide usuario y token de GitHub (`read:packages`).
@@ -67,6 +69,8 @@ down -v` si había algo) antes de sincronizarlo a Azure DevOps.
 
 ## Después de instalar
 
+0. **Guardar la contraseña del usuario de cumplimiento** que mostró `./install.sh` (se muestra una sola vez,
+   ver «Usuario de cumplimiento») y entregarla a quien cumple ese rol en la empresa.
 1. **Plantilla corporativa de presentaciones**: entrar al Hub como `admin`, abrir la pestaña
    "Plantillas" (o `http://localhost:8097/templates`), subir el `.pptx` corporativo, aceptar las
    fuentes de respaldo y confirmar. Tarda unos 5 minutos por 6 diapositivas. Después aparece
@@ -100,9 +104,68 @@ motor; y borra el contenedor viejo de DB-GPT (`exact-analysis-engine`) que ya no
 compose. Las variables viejas del `.env` (`MASKING_VIRTUAL_KEY`, `DBGPT_ENGINE_VIRTUAL_KEY`) quedan
 sin uso; se pueden borrar a mano.
 
+**El usuario de cumplimiento no se crea solo al actualizar**: una instalación existente lo pide a mano,
+una vez, con `./crear-super-admin.sh` (ver «Usuario de cumplimiento»). Si ya hay un `super_admin`, informa y no toca nada.
+
 Al terminar, las sesiones del Hub se cierran (viven en memoria): cada persona vuelve a entrar.
 Verificar: entrar al Hub, ver las tres secciones (documentos, planillas, presentaciones) y, como
 `admin`, abrir `http://<servidor>:8097/templates`.
+
+## Usuario de cumplimiento (`super_admin`)
+
+Cada instalación tiene dos tipos de usuario con poder de administración, y no son la misma persona:
+
+| Usuario | Quién lo usa | Para qué |
+|---|---|---|
+| `admin` | quien administra la plataforma (TI) | usuarios, llaves, presupuestos, configuración. Su contraseña está en `.env` (`ADMIN_PASSWORD`). |
+| `cumplimiento` (rol `super_admin`) | el oficial de cumplimiento de la empresa | **crea a los Auditores** y **relaja el enmascarado** de la 057 (qué datos se ven enmascarados y cuáles no). |
+
+Separarlos es deliberado: quien administra la plataforma no es quien decide qué se audita ni qué se enmascara.
+
+### Cómo se crea
+
+* **Instalación nueva**: `./install.sh` lo crea solo, en su segunda corrida (la que levanta todo), con el usuario
+  `cumplimiento` y el correo `cumplimiento@elea-internal.com`. Lo hace llamando a `./crear-super-admin.sh`.
+  Si ese paso falla, la instalación sigue; la próxima corrida de `./install.sh` (o el comando a mano) lo reintenta.
+* **Instalación que ya existía** (la actualización con `./install.sh` **no** lo crea, a propósito: aparece una
+  credencial nueva y es una decisión de la empresa):
+
+  ```bash
+  ./crear-super-admin.sh                      # usuario «cumplimiento»
+  ./crear-super-admin.sh --usuario oficial.cumplimiento --email oficial@empresa.com   # con otro nombre/correo
+  ```
+
+  Se corre **una vez**. Si ya hay un `super_admin` (cualquiera, no solo este usuario) lo informa y no toca nada, así
+  que repetirlo no hace daño. No se puede llamar `admin`: ese es el administrador de la empresa. Hace falta el backend
+  levantado (`docker compose ps`) y una imagen que traiga el comando; si el mensaje dice `No module named src.cli`,
+  primero actualizar (`./install.sh`).
+
+### La contraseña
+
+* La **genera el backend** (alta entropía) y se muestra **una sola vez** en la pantalla donde se corrió el comando.
+  No se escribe en `.env`, ni en ningún archivo del instalador, ni en los logs, y no viaja por los argumentos de ningún
+  comando. Por eso no se puede volver a ver: si se pierde, no la recupera el instalador (el segundo intento da «ya hay un `super_admin`»).
+* Es **temporal**: el usuario queda obligado a cambiarla en su primer ingreso (panel, `http://<servidor>:8090`) y el sistema
+  registra la creación en la auditoría de autenticación.
+* **Dónde guardarla**: en el gestor de contraseñas de la empresa, o en un sobre cerrado en la caja fuerte, entregada en
+  mano a la persona de cumplimiento. **No** en `.env`, ni en el repositorio, ni por chat o correo. Hasta que esa persona
+  la cambie, quien la vio en pantalla conoce una credencial de `super_admin`: conviene que el primer ingreso sea enseguida.
+* **Si se pierde antes del primer ingreso**: si existe otro `super_admin` puede restablecerla desde el panel; si era el único,
+  el instalador no tiene un camino para eso (no está probado acá cuál es el procedimiento en el backend): consultar al equipo
+  antes de tocar la base a mano.
+
+### Runbook (producción)
+
+```bash
+cd ~/Eleia-cli
+docker compose ps backend                  # tiene que estar «healthy»
+./crear-super-admin.sh                     # copiar la contraseña de la pantalla ANTES de seguir
+#   «ya hay un super_admin…»  → no hace falta nada más (no se creó ni se cambió nada)
+#   «No module named src.cli» → la imagen es anterior: ./install.sh y repetir
+```
+
+La pantalla puede quedar en el historial de la terminal: limpiarla (`clear`) y, si se corrió por una consola web o VPN,
+cerrar la sesión al terminar.
 
 ## Base propia del motor, respaldo y versión del motor
 
@@ -439,6 +502,7 @@ no hace falta intervenir.
 
 ```bash
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
+bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
 ELEA_CADDY_BIN=/ruta/a/caddy bash tests/test-proxy.sh   # si `caddy` no está en el PATH
 docker compose config -q         # el compose es válido con tu .env
