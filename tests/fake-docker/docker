@@ -2,15 +2,25 @@
 # Docker de mentira para probar migrar-base-motor.sh y respaldo.sh sin levantar nada.
 # Registra cada llamada en $FAKE_LOG y contesta según las variables FAKE_* (ver tests/test-base-motor.sh).
 echo "docker $*" >> "${FAKE_LOG:?}"
+# Qué ve compose del entorno (lo usa tests/test-redirect-optin.sh para comprobar con qué archivos corre).
+[ -z "${COMPOSE_FILE:-}${EXTRA_ENV_FILE:-}" ] || echo "docker $* :: COMPOSE_FILE=${COMPOSE_FILE:-} EXTRA_ENV_FILE=${EXTRA_ENV_FILE:-}" >> "${FAKE_LOG}.env"
 case "${1:-}" in
   compose)
     case "${2:-}" in
       version) echo "Docker Compose version v2.39.2" ;;
-      config)  echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa" ;;
+      # `config --format json` devuelve el archivo $FAKE_COMPOSE_JSON (lo arma la prueba con tests/render-compose.py).
+      config)  case "$*" in
+                 *"--format json"*) [ -z "${FAKE_COMPOSE_JSON:-}" ] || cat "$FAKE_COMPOSE_JSON" ;;
+                 *) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa" ;;
+               esac ;;
+      pull)    exit "${FAKE_PULL_RC:-0}" ;;
       exec)
         # Comando del backend `python -m src.cli crear-super-admin` (contrato: contraseña por stdout en
         # `PASSWORD=<valor>`, mensajes por stderr; exit 0 creado, 3 ya hay un super_admin, otro = error).
         case "$*" in
+          # Archivo de seeds dentro de la imagen: FAKE_SEED_MISSING lista nombres que NO están.
+          *"test -f"*) for f in ${FAKE_SEED_MISSING:-}; do case "$*" in *"$f"*) exit 1 ;; esac; done; exit 0 ;;
+          *sentinel.catalog.seed*) exit "${FAKE_CATALOG_RC:-0}" ;;
           *crear-super-admin*)
             case "${FAKE_SA:-creado}" in
               creado)     echo "super_admin creado" >&2; echo "PASSWORD=${FAKE_SA_PASSWORD:-Zk9-contrasena-de-mentira}"; exit 0 ;;

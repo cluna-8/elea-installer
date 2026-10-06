@@ -52,6 +52,9 @@ Presenton y AnythingLLM son imágenes públicas fijadas por digest/versión, **y
 ni `./install.sh` ni `docker compose pull` lo cambian solos. Subirlo es una tarea deliberada, con
 copia previa: ver «Subir la versión del motor».
 
+Además, `publish-elea.sh` publica variantes **`-ext`** de backend, panel y motor (tag `<versión>-ext`, nunca `latest`): solo las usa
+`./install.sh` con `ELEA_REDIRECT=1`. Ver «Extensión de redirección de modelos».
+
 **Publicarlas siempre con el script del repo `elea`**, nunca con `docker build` a mano:
 
 ```bash
@@ -417,6 +420,172 @@ igual se hace con copia previa:
 El digest que trae este repo es el de la etiqueta `2026-09-17` (`sha256:1928af9d…6189dafe`); la `2026-09-14`
 tiene el mismo motor por dentro (capas idénticas), así que pasar de una a otra no trae migraciones.
 
+## Extensión de redirección de modelos (opcional, apagada por defecto)
+
+Permite que Claude Desktop y Claude Code de los empleados le hablen a la pasarela del Guardian y que sus pedidos se sirvan
+con los modelos de Azure de Elea que Cumplimiento publica en el panel («Modelos»), con el enmascarado de datos personales
+(seudonimización reversible) que rija para cada destino. Se activa **a propósito**, por instalación, con una variable:
+
+* **Sin `ELEA_REDIRECT`, este instalador hace exactamente lo de siempre**: `docker-compose.yml` no cambia ni un byte (la extensión
+  es un archivo aparte, `docker-compose.redirect.yml`, que solo se suma cuando se la activa) y `./activar-redirect.sh` no escribe ni recrea nada.
+* **Con `ELEA_REDIRECT=1`**: backend, panel y motor pasan a las imágenes `-ext` de **la misma versión publicada**
+  (`ghcr.io/cluna-8/elea-guardian-{backend,frontend,engine}:<ELEA_EXT_VERSION>-ext`; las `-ext` derivan de las imágenes base y solo les
+  suman archivos; **nunca mueven `latest`**), el backend arranca con `alembic upgrade heads` (la extensión trae su propia rama de
+  migraciones) y backend y motor reciben el entorno de la extensión, que genera el instalador en un archivo **fuera del repo, modo 600**
+  (`~/.config/elea/redirect.env`, o `ELEA_REDIRECT_ENV_FILE=/ruta/absoluta`). Ese archivo tiene secretos (`REDIRECT_INTERNAL_KEY`,
+  `MASKING_NONCE_KEY`): nunca se versiona ni se imprime; las llaves se generan **una vez** y no se pisan al repetir `./install.sh`.
+  Lo que el operador agregue ahí (credenciales de destinos de la instalación) se conserva.
+* **Siembra** (solo con la extensión): las regiones (`AMERICAS`) y la habilitación (reglas vacías: ningún destino bloqueado de fábrica) las
+  carga el backend solo al arrancar; el catálogo de ejemplo de Azure lo siembra el instalador **una vez**. En el panel hay que
+  completar, por destino, la jurisdicción de inferencia y la entidad responsable: sin jurisdicción de inferencia el destino se rechaza.
+
+> **Estado de la verificación.** Este procedimiento se probó con un Docker simulado (`bash tests/test-redirect-optin.sh`,
+> `bash tests/test-runbook-redirect.sh`) y con `docker compose config -q`. **No se probó con contenedores reales**: la prueba local del
+> instalador con `ELEA_REDIRECT=1` (Claude Desktop y Claude Code contra la pasarela local, Azure de destino) está pendiente, y tiene que
+> hacerse **antes** de usar este runbook en el servidor. Tampoco se probó la vuelta atrás (nivel 2) con contenedores.
+>
+> **Tag mínimo pendiente.** El instalador solo activa la extensión con una `ELEA_EXT_VERSION` igual o posterior a `ELEA_EXT_MIN_VERSION`,
+> la fecha del primer backend publicado que trae el chequeo de origen del canal interno. Hoy esa constante (en `install.sh`) vale
+> `PENDIENTE-PRIMER-RELEASE`: todavía no se publicó ninguna imagen con ese chequeo, y **`ELEA_REDIRECT=1` falla cerrado** con un
+> mensaje que lo explica. El release que publica las imágenes `-ext` reemplaza ese valor por la fecha de su publicación (AAAA-MM-DD),
+> por PR, en `install.sh`. Un valor puesto en `.env` no la baja.
+
+### Antes de activar
+
+El instalador comprueba tres condiciones y, si falta alguna, **no toca nada** y termina con un error que la explica:
+
+1. el compose del instalador tiene el proxy de la API (`api-proxy`) y el backend no publica puertos (sale solo el proxy, que niega `/api/v1/internal/*`);
+2. `ELEA_EXT_VERSION` >= `ELEA_EXT_MIN_VERSION` (ver arriba);
+3. `/api/v1/internal/*` da 404 por el puerto publicado (8091), con el Guardian ya levantado.
+
+Además, por tu cuenta:
+
+* La versión: `ELEA_EXT_VERSION=AAAA-MM-DD` es el `VERSION` con que `deploy/release/publish-elea.sh` (repo `elea`) publicó las imágenes `-ext`
+  (no hay valor por omisión: ni `latest` ni una fecha implícita). Si una imagen no se publicó, el instalador lo dice al bajarla y no activa nada.
+* El motor `-ext` deriva del motor base **de esa versión**: fijalo por digest con la línea `PINNED elea-guardian-engine=…@sha256:…` que imprime `publish-elea.sh` al publicar la `-ext` (viene después de la de la imagen base)
+  (`ENGINE_EXT_IMAGE=` en `.env`; igual `BACKEND_EXT_IMAGE` y `FRONTEND_EXT_IMAGE`) y, después de activar, confirmá con
+  `./migrar-base-motor.sh --verificar` que el libro de migraciones del motor no cambió.
+* Ventana: la activación recrea el motor, el backend y el panel (un corte corto de la API, el panel, el Hub, planillas y presentaciones).
+
+### Respaldo previo
+
+**Antes de activar**, la copia de las dos bases. Volver a las imágenes base **solo** se puede restaurándola (ver «Vuelta atrás»):
+
+```bash
+cd ~/Eleia-cli
+git pull origin main
+./respaldo.sh                              # respaldos/AAAA-MM-DD-HHMMSS/{elea_gateway.dump,elea_engine.dump,SHA256SUMS}
+```
+
+Copiar esa carpeta **fuera del servidor** (`scp` o el almacenamiento de la empresa) antes de seguir: en el mismo servidor no es un respaldo.
+`./install.sh` toma además un respaldo propio al activar por primera vez (`ELEA_SIN_RESPALDO=1` lo omite, bajo tu responsabilidad: sin él no hay nivel 2).
+
+### Activar
+
+```bash
+cd ~/Eleia-cli
+echo 'ELEA_REDIRECT=1'                  >> .env
+echo 'ELEA_EXT_VERSION=AAAA-MM-DD'      >> .env     # la versión publicada con las imágenes -ext
+./install.sh
+```
+
+`./install.sh` hace su actualización normal y, al final, `./activar-redirect.sh`: comprueba las tres condiciones, baja las `-ext`, toma el respaldo,
+escribe el entorno de la extensión, recrea motor, backend y panel, espera al backend (si una migración de la extensión falla, el backend **aborta**
+el arranque y el instalador lo dice), comprueba que los seeds estén en la imagen y consulta `/api/v1/redirect/health`. **Cualquier respuesta que no
+sea 200 es un error visible** (503 de la postura de respaldo, 404 de una imagen `-ext` inerte). Deja en `.env` las marcas que necesita para recordar la
+activación (`ELEA_REDIRECT`, `ELEA_EXT_VERSION`, `COMPOSE_FILE`, `EXTRA_ENV_FILE`, `ELEA_REDIRECT_ACTIVADA`, `ELEA_REDIRECT_CATALOGO`): no tienen secretos,
+y con `COMPOSE_FILE` todo `docker compose` de esta carpeta ve las imágenes `-ext`. Repetir `./install.sh` es seguro.
+
+### Verificar
+
+```bash
+# En el servidor (el puerto publicado es el del proxy, 8091):
+curl -s -w '\n%{http_code}\n' http://localhost:8091/api/v1/redirect/health      # 200
+curl -s -H "Authorization: Bearer <LLAVE>" http://localhost:8091/api/v1/gw/v1/models   # los modelos publicados para esa llave
+curl -s http://localhost:8091/api/v1/gw/v1/messages \
+  -H "Authorization: Bearer <LLAVE>" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
+  -d '{"model":"<ID PUBLICADO>","max_tokens":32,"messages":[{"role":"user","content":"Respondé solo: ok"}]}'
+# Desde OTRA máquina de la LAN/VPN (no desde el servidor): el plano interno tiene que estar cerrado.
+curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/internal/identity     # 404
+```
+
+* `/api/v1/redirect/health`: **200** = la extensión está activa y su región está resuelta. **503** con `region_unresolved` o `region_row_missing` =
+  rige el respaldo en código (se rechaza todo lo redirigido): los seeds no se cargaron; mirar `./elea-logs.sh backend`. **404** = la extensión no está
+  montada (imagen `-ext` sin entorno): revisar `docker compose ps backend` y que `EXTRA_ENV_FILE` (en `.env`) exista.
+* `/api/v1/gw/v1/models` lista los modelos publicados para esa llave; sin nada publicado todavía en «Modelos», no hay qué listar.
+* El pedido de prueba no lleva datos personales: la auditoría registra metadatos (modelo pedido, destino, enmascarado aplicado), nunca el texto.
+* `/api/v1/internal/*` ⇒ 404 desde afuera es el requisito de seguridad de la activación. Si da otra cosa, **apagar la extensión** (nivel 1) y avisar.
+* Publicar los modelos, las reglas y encender la política es trabajo del panel («Modelos»), con Cumplimiento: el instalador no lo hace.
+
+### Configurar Claude Desktop y Claude Code de los empleados
+
+Una **llave por persona**: se crea en el panel del Guardian (`http://<servidor>:8090`) y se entrega en mano o por el gestor de contraseñas de la
+empresa (canal seguro), nunca por chat ni correo. La URL de la pasarela es `http://<servidor>:8091/api/v1/gw` (`<servidor>` = el nombre o la IP
+con que las PC llegan al servidor **por la VPN**). El tráfico va por **HTTP plano**: solo dentro de la VPN/LAN de la empresa.
+
+* **Claude Code** (variables de entorno de la PC de la persona):
+
+  ```bash
+  export ANTHROPIC_BASE_URL=http://<servidor>:8091/api/v1/gw
+  export ANTHROPIC_AUTH_TOKEN=<LLAVE>
+  # opcional, con los ids publicados que la versión instalada de Claude Code reconozca:
+  # export ANTHROPIC_DEFAULT_SONNET_MODEL=<ID PUBLICADO>
+  ```
+
+* **Claude Desktop** (modo de terceros, pasarela): `inferenceProvider = gateway`, `inferenceGatewayBaseUrl = http://<servidor>:8091/api/v1/gw`,
+  la llave virtual como credencial, `inferenceGatewayAuthScheme = bearer` y el descubrimiento de modelos activado (así lista los modelos publicados).
+  Si un rechazo de residencia (403) aparece con «Failed to authenticate» antepuesto, es el texto de Claude Desktop, no un error de la llave.
+
+### Vuelta atrás (dos niveles)
+
+**Cuál elegir.** El nivel 1 *apaga* la extensión y se hace en minutos, sin tocar datos. El nivel 2 *vuelve a las imágenes base* y **solo** se puede
+con el respaldo previo a la activación: con las migraciones de la extensión aplicadas, el rollback a una imagen sin la extensión **no está soportado**
+(la imagen base fallaría al arrancar por revisiones desconocidas en la base). **Sin el respaldo previo no hay nivel 2.**
+
+#### Nivel 1 — apagar
+
+1. En el panel («Modelos»), dejar la política **Apagada** para el alcance: los pedidos vuelven al camino de siempre.
+2. Sacar la variable y correr el instalador:
+
+   ```bash
+   cd ~/Eleia-cli
+   unset ELEA_REDIRECT
+   sed -i '/^ELEA_REDIRECT=/d' .env
+   ./install.sh
+   ```
+
+   `./activar-redirect.sh` ve la activación anterior (`ELEA_REDIRECT_ACTIVADA=1`), quita `GATEWAY_PLUGINS` y `PLUGIN_PACKAGES` del entorno de la
+   extensión y recrea motor y backend. **Conserva** la imagen `-ext` del backend (y la del panel y el motor) y `ALEMBIC_EXTRA_VERSION_LOCATIONS`: con las
+   migraciones ya aplicadas, la imagen base no arranca (el `upgrade head` falla por revisiones desconocidas). Las rutas de la extensión desaparecen
+   (`/api/v1/redirect/health` pasa a 404: es lo esperado) y la pasarela queda como antes. Para volver a encender: poner otra vez `ELEA_REDIRECT=1`.
+
+#### Nivel 2 — volver a las imágenes base
+
+**Solo** restaurando el respaldo previo (`respaldos/<fecha>/`, el que se tomó **antes** de activar). Se pierde todo lo que pasó después de ese respaldo
+(usuarios, llaves, auditoría, gasto). El procedimiento no borra nada: la base con la extensión se renombra, no se elimina. Mismo patrón que la «Vuelta C»;
+**el cambio de nombre y el arranque con las imágenes base no se probaron con contenedores reales**:
+
+```bash
+cd ~/Eleia-cli
+./respaldo.sh                                      # copia del estado ACTUAL, por si hay que deshacer esto
+set -a; source .env; set +a
+D=respaldos/AAAA-MM-DD-HHMMSS                      # el respaldo previo a la activación; verificar: (cd $D && sha256sum -c SHA256SUMS)
+docker exec elea-db psql -U "$POSTGRES_USER" -d postgres -c 'CREATE DATABASE elea_gateway_restaurada'
+docker exec -i elea-db pg_restore -U "$POSTGRES_USER" -d elea_gateway_restaurada --no-owner --exit-on-error < "$D/elea_gateway.dump"
+docker compose stop api-proxy frontend client tabular presenton anythingllm backend engine
+docker exec elea-db psql -U "$POSTGRES_USER" -d postgres \
+  -c 'ALTER DATABASE "elea_gateway" RENAME TO "elea_gateway_con_extension"' \
+  -c 'ALTER DATABASE "elea_gateway_restaurada" RENAME TO "elea_gateway"'
+# Sacar del instalador todo lo de la extensión (en .env y en esta sesión) y volver a las imágenes base:
+sed -i -E '/^(ELEA_REDIRECT|ELEA_EXT_VERSION|COMPOSE_FILE|EXTRA_ENV_FILE|ELEA_REDIRECT_ACTIVADA|ELEA_REDIRECT_CATALOGO|BACKEND_EXT_IMAGE|FRONTEND_EXT_IMAGE|ENGINE_EXT_IMAGE)=/d' .env
+unset ELEA_REDIRECT ELEA_EXT_VERSION COMPOSE_FILE EXTRA_ENV_FILE ELEA_REDIRECT_ACTIVADA ELEA_REDIRECT_CATALOGO BACKEND_EXT_IMAGE FRONTEND_EXT_IMAGE ENGINE_EXT_IMAGE
+./install.sh                                       # sin las variables, compose vuelve a ver solo docker-compose.yml: imágenes base
+```
+
+La extensión solo agrega tablas a la base del Guardian: la base del motor (`elea_engine`) no se restaura (el motor `-ext` deriva del mismo digest del motor
+base; confirmar con `./migrar-base-motor.sh --verificar` después). Cuando todo ande, el archivo de entorno de la extensión (`~/.config/elea/redirect.env`) se borra
+a mano y, si se vuelve a activar más adelante, se generan llaves nuevas. La base `elea_gateway_con_extension` se borra solo por decisión de una persona (`DROP DATABASE`, con copia previa).
+
 ## Cómo llega este instalador al servidor de Elea (decisión del 14-sep-2026)
 
 **Decisión del dueño (14-sep-2026), por los problemas de acceso que hubo en Elea:** los repos se
@@ -504,6 +673,8 @@ no hace falta intervenir.
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
 bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
+bash tests/test-redirect-optin.sh    # extensión de redirección: opt-in, imágenes -ext, entorno 600, gate, salud, apagar (Docker y curl simulados)
+bash tests/test-runbook-redirect.sh  # runbook de la extensión: respaldo, activar, verificar, configurar herramientas, vuelta atrás
 ELEA_CADDY_BIN=/ruta/a/caddy bash tests/test-proxy.sh   # si `caddy` no está en el PATH
 docker compose config -q         # el compose es válido con tu .env
 ```

@@ -53,6 +53,13 @@ PY
 fi
 
 set -a; source .env; set +a
+# Extensión de redirección de modelos (opt-in, ELEA_REDIRECT=1; README, «Extensión de redirección de modelos»).
+# Tag MÍNIMO (AAAA-MM-DD) del backend publicado que trae el chequeo de origen del canal interno: con una versión
+# anterior ./activar-redirect.sh no activa la extensión. Se fija ACÁ, después de leer .env, para que un valor en
+# .env no pueda bajarlo. «PENDIENTE-PRIMER-RELEASE» = todavía no hay imagen con ese chequeo: ELEA_REDIRECT=1 NO se
+# puede activar hasta que el release que la trae reemplace este valor por la fecha de su publicación.
+ELEA_EXT_MIN_VERSION="PENDIENTE-PRIMER-RELEASE"
+export ELEA_EXT_MIN_VERSION
 [ -n "${AZURE_OPENAI_API_KEY:-}" ] || die "Falta AZURE_OPENAI_API_KEY en .env — completalo y volvé a correr."
 
 # ── 2. Registro de imágenes ─────────────────────────────────────────────────────────
@@ -253,6 +260,11 @@ docker compose pull tabular presenton client 2>&1 | grep -v "^ " || true
 # --remove-orphans: al actualizar desde una instalación anterior borra el contenedor de DB-GPT
 # (exact-analysis-engine), que ya no está en este compose.
 docker compose up -d --remove-orphans tabular presenton client
+
+# ── 8. Extensión de redirección de modelos (opt-in) ─────────────────────────────────
+# Sin ELEA_REDIRECT no hace nada (ni escribe ni recrea nada). Con ELEA_REDIRECT=1 comprueba las condiciones, toma
+# el respaldo y cambia backend, panel y motor a las imágenes -ext. Si se la saca de .env, la apaga (nivel 1).
+./activar-redirect.sh || die "La extensión de redirección no quedó activa (el resto de la instalación está listo). Ver el mensaje de arriba y README, «Extensión de redirección de modelos»."
 
 echo
 echo "================================================================"

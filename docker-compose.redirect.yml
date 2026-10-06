@@ -1,0 +1,36 @@
+# Override OPCIONAL de docker-compose.yml: la extensión de redirección de modelos (opt-in, ELEA_REDIRECT=1).
+# NO se usa solo: `./activar-redirect.sh` lo agrega a COMPOSE_FILE en .env cuando se activa la extensión. Sin él,
+# `docker compose` ve exactamente el docker-compose.yml de siempre (por eso es un archivo aparte y no un cambio
+# a ese: quien no activa la extensión no cambia ni un byte de lo que compose renderiza).
+#
+# Qué cambia con la extensión (y solo esto — tests/test-redirect-optin.sh lo comprueba):
+#   · backend, panel y motor usan las imágenes -ext de la MISMA versión publicada (tag propio
+#     <AAAA-MM-DD>-ext, nunca latest). Las -ext derivan de las imágenes base y solo les suman archivos;
+#     nada se activa por estar en la imagen.
+#   · backend y motor reciben el entorno de la extensión (EXTRA_ENV_FILE: un archivo FUERA del repo, modo 600,
+#     con secretos generados al activar). `environment:` de docker-compose.yml gana sobre ese archivo.
+#   · el backend arranca con `alembic upgrade heads`: la extensión trae su propia rama de migraciones y con dos
+#     ramas `head` falla. Si una migración falla, el backend -ext aborta el arranque (no sirve a medias).
+# Lo que NO cambia: puertos (el backend sigue sin publicar nada: lo único que sale es el proxy, que niega
+# /api/v1/internal/*), INTERNAL_ALLOWED_CIDRS=auto, redes, volúmenes ni el resto de las imágenes.
+#
+# Variables (las fija ./activar-redirect.sh o el .env): ELEA_EXT_VERSION (obligatoria, sin default flotante),
+# BACKEND_EXT_IMAGE / FRONTEND_EXT_IMAGE / ENGINE_EXT_IMAGE (reemplazan la imagen entera, p. ej. por digest),
+# EXTRA_ENV_FILE. Requiere Docker Compose >= 2.24 (env_file con `required: false`).
+services:
+  backend:
+    image: ${BACKEND_EXT_IMAGE:-ghcr.io/cluna-8/elea-guardian-backend:${ELEA_EXT_VERSION:?Falta ELEA_EXT_VERSION (AAAA-MM-DD) en .env}-ext}
+    command: ["sh", "-c", "alembic upgrade heads && uvicorn src.main:app --host 0.0.0.0 --port 8000"]
+    env_file:
+      - path: ${EXTRA_ENV_FILE:-/dev/null}
+        required: false
+
+  engine:
+    # ENGINE_IMAGE (el digest de la base) no aplica acá: la -ext del motor deriva de la base de esa versión.
+    image: ${ENGINE_EXT_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine:${ELEA_EXT_VERSION:?Falta ELEA_EXT_VERSION (AAAA-MM-DD) en .env}-ext}
+    env_file:
+      - path: ${EXTRA_ENV_FILE:-/dev/null}
+        required: false
+
+  frontend:
+    image: ${FRONTEND_EXT_IMAGE:-ghcr.io/cluna-8/elea-guardian-frontend:${ELEA_EXT_VERSION:?Falta ELEA_EXT_VERSION (AAAA-MM-DD) en .env}-ext}
