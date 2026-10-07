@@ -162,6 +162,11 @@ services:
       # que HUB_BRAND_* del Hub en :262-268): esta instalación fija «Eleia GuardIAn».
       # Literal acá (no en .env) — es la marca de la instalación, no un dato del operador.
       - BRAND_NAME=Eleia GuardIAn
+      # URL pública de la pasarela que llevan los kits de cliente (Modelos → Kits): la
+      # ruta del panel la deduce de los encabezados, pero si el host es interno de compose
+      # (backend:8000) pone un marcador. Con esta variable el kit sale listo para repartir.
+      # Sin valor (el default) la ruta la deduce; el panel avisa si no puede.
+      - REDIRECT_GATEWAY_URL=${REDIRECT_GATEWAY_URL:-}
     depends_on:
       db: { condition: service_healthy }
       engine: { condition: service_healthy }

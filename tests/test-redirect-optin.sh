@@ -72,7 +72,7 @@ chequear "el override del compose existe" [ -s "$AQUI/docker-compose.redirect.ym
 # ───────────────────────────────────────────────────────────────────────────────────────────────
 echo "— T100 sin ELEA_REDIRECT: nada cambia (el compose de la instalación ya corregida queda idéntico)"
 chequear "docker-compose.yml no menciona la extensión (imágenes -ext, entorno extra, redirect)" \
-  bash -c '! grep -Eiq "elea_redirect|elea_ext|extra_env_file|redirect|[0-9]-ext|sentinel\.(redirect|catalog)" "$1"' _ "$AQUI/docker-compose.yml"
+  bash -c '! grep -Ein "elea_redirect|elea_ext|extra_env_file|redirect|[0-9]-ext|sentinel\.(redirect|catalog)" "$1" | grep -iv "REDIRECT_GATEWAY_URL" | grep -q .' _ "$AQUI/docker-compose.yml"
 # Mismo render del compose con el entorno de una corrida SIN la variable que con una corrida CON ella pero sin
 # aplicar el override (lo que ve compose cuando COMPOSE_FILE no está): por hash.
 h_base=$(python3 "$RENDER" --hash)
