@@ -159,7 +159,7 @@ cumplimiento», «Extensión de redirección de modelos»).
 >
 > **Imágenes del candidato (no publicadas).** Se construyeron en local, con los mismos Dockerfile y contextos de `deploy/release/publish-elea.sh` (repo `elea`, rama final de la 057, `8dfb40c`) y **sin
 > subirlas a ningún registro**, con el tag `2026-10-07` (base) y `2026-10-07-ext`. Publicarlas es una decisión aparte del owner: `VERSION=2026-10-07 deploy/release/publish-elea.sh`, ya logueado en
-> el registro. `ELEA_EXT_MIN_VERSION` en `install.sh` ya vale `2026-10-07` y el Paso 6 usa ese mismo tag: **no quedan marcadores por completar**. Si el release sale con otra fecha, tiene que ser
+> el registro. `ELEA_EXT_MIN_VERSION` en `install.sh` ya vale `2026-10-08` y el Paso 6 usa ese mismo tag: **no quedan marcadores por completar**. Si el release sale con otra fecha, tiene que ser
 > **igual o posterior** a `2026-10-07` y construida desde esa rama o una posterior; ese tag es el que se pone en `ELEA_EXT_VERSION`. Las referencias por digest de las `-ext`
 > (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE`, opcionales) salen de las líneas `PINNED …` de ese release.
 
@@ -258,12 +258,12 @@ git fetch origin && git log --oneline HEAD..origin/main
 git pull origin main
 git log -1 --format='instalador nuevo: %h %ad %s' --date=short
 docker compose config -q && echo "compose OK"
-grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # 2026-10-07: el Paso 6 necesita un ELEA_EXT_VERSION igual o posterior
+grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # 2026-10-08: el Paso 6 necesita un ELEA_EXT_VERSION igual o posterior
 ls -l respaldo.sh migrar-base-motor.sh crear-super-admin.sh activar-redirect.sh docker-compose.redirect.yml proxy/Caddyfile
 ```
 
 **Verificar.** `git pull` termina sin conflictos; el último commit es el esperado; `compose OK`; los seis archivos de la última línea existen (los scripts, con permiso de ejecución).
-`ELEA_EXT_MIN_VERSION` tiene que dar una fecha (`2026-10-07` en este instalador); si no, el instalador es anterior a T102 y el Paso 6 se va a negar (falla cerrado, sin tocar nada). Repetir este Paso 2.
+`ELEA_EXT_MIN_VERSION` tiene que dar una fecha (`2026-10-08` en este instalador); si no, el instalador es anterior a T102 y el Paso 6 se va a negar (falla cerrado, sin tocar nada). Repetir este Paso 2.
 
 **Si falla**
 
@@ -400,7 +400,7 @@ Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque
 
 ```bash
 cd ~/Eleia-cli
-ELEA_EXT_VERSION='2026-10-07'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-07)
+ELEA_EXT_VERSION='2026-10-08'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-08)
 GW_URL='https://<servidor>:8443/api/v1/gw'              # la dirección HTTPS con que las PC llegan a la pasarela por la VPN (va en los kits de Claude Desktop); <servidor> = el primer nombre de PROXY_TLS_NAMES
 if [[ "$ELEA_EXT_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   [ -z "$(tail -c1 .env)" ] || echo >> .env
@@ -442,6 +442,25 @@ Las variables `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` y `AZURE_API_VERSI
 cd ~/Eleia-cli
 docker compose up -d engine backend                    # recrea con el .env nuevo; conserva las imágenes -ext (COMPOSE_FILE ya está en .env)
 ```
+
+**Despliegue de embeddings del ruteo (`ROUTER_EMBEDDINGS_DEPLOYMENT`).** El ruteo semántico (el que elige modelo según el contenido) calcula sus vectores con un modelo de embeddings **del mismo recurso de Azure**. Azure lo identifica por el **nombre del despliegue**, que elige quien creó el recurso, no por el nombre del modelo. Si en `.env` no está o está vacía, el motor usa `text-embedding-3-large` (lo de siempre). **En Elea el despliegue se llama `text-embedding-3-large-azure-openai`**, así que en `.env` va:
+
+```
+ROUTER_EMBEDDINGS_DEPLOYMENT=text-embedding-3-large-azure-openai
+```
+
+Para ver cómo se llaman los despliegues del recurso, usando la llave que ya está en `.env` **sin imprimirla** (va al curl por la entrada estándar, no por la línea de comandos ni por pantalla):
+
+```bash
+cd ~/Eleia-cli
+KEY=$(grep -m1 '^AZURE_OPENAI_API_KEY=' .env | cut -d= -f2-)
+BASE=$(grep -m1 '^AZURE_OPENAI_ENDPOINT=' .env | cut -d= -f2-)
+printf 'api-key: %s\n' "$KEY" | curl -sS -H @- "${BASE%/}/openai/deployments?api-version=2022-12-01" \
+  | python3 -c 'import json,sys; [print(d["id"], "->", d.get("model"), d.get("status")) for d in json.load(sys.stdin)["data"]]'
+unset KEY BASE
+```
+
+Cada línea es `nombre-del-despliegue -> modelo estado`: se copia el de `text-embedding-3-large` a `ROUTER_EMBEDDINGS_DEPLOYMENT` y se recrea el motor (`docker compose up -d engine`; `restart` **no** relee `.env`). Si no sale ninguna línea, la salida es un error (por ejemplo `401`: la llave no es de ese recurso, o una dirección mal escrita): no se sigue hasta que el listado salga. Esto necesita el motor con la imagen que lee la variable; con una anterior se ignora y rige el nombre de siempre.
 
 **Variables opcionales del enmascarado (no hace falta tocarlas).** La 057 agregó estas variables; **todas tienen un valor por defecto seguro** y el instalador **no las escribe**: rige el default.
 Llegan al motor y al backend por el mismo archivo de entorno de la extensión (`redirect.env`; `EXTRA_ENV_FILE`), y ni el compose ni el instalador definen ninguna, así que lo que se agregue ahí **no se pisa** (lo comprueba `bash tests/test-redirect-optin.sh`).
@@ -1129,8 +1148,8 @@ igual se hace con copia previa:
    o, solo para una prueba, en `.env` como `ENGINE_IMAGE=…`.
 3. `./install.sh`, y verificar con `./migrar-base-motor.sh --verificar`.
 
-El digest que trae este repo es el de la etiqueta `2026-10-07` (`sha256:ded7b34d…a84e4`), con los arreglos de la base de la 057
-(detección de llaves, enmascarado y caché). Tiene la misma LiteLLM que las `2026-09-17` (`sha256:1928af9d…6189dafe`) y `2026-09-14`
+El digest que trae este repo es el de la etiqueta `2026-10-08` (`sha256:520a8d72…1abd7`): la `2026-10-07` (arreglos de la base de la 057:
+detección de llaves, enmascarado y caché) más `ROUTER_EMBEDDINGS_DEPLOYMENT`. Tiene la misma LiteLLM que las `2026-09-17` (`sha256:1928af9d…6189dafe`) y `2026-09-14`
 (1.92.0 / proxy-extras 0.4.74, verificado el 7-oct), así que pasar de una a otra no trae migraciones del motor.
 
 ## Extensión de redirección de modelos (opcional, apagada por defecto)
@@ -1379,6 +1398,8 @@ Si el 404 aparece en `/api/v1/gw/*` o en el resto de la API, no es esto: revisar
 **`./install.sh` dice que el puerto 8091 lo usa otro proceso**: el proxy de la API necesita ese puerto. `ss -ltnp | grep 8091`
 muestra quién lo tiene; liberarlo y volver a correr.
 
+**El ruteo semántico cae siempre al modelo por defecto** (la decisión de ruteo queda degradada con el motivo `embed_error`; en `./elea-logs.sh backend` se lee «Auto-router: fallo al embeber»): lo más común es que el **despliegue de embeddings** no se llame como cree el motor. En `./elea-logs.sh engine` aparece algo como `DeploymentNotFound` / «The API deployment for this resource does not exist». Arreglo: listar los despliegues del recurso con la llave de `.env` (README, «Despliegue de embeddings del ruteo»), poner el nombre correcto en `ROUTER_EMBEDDINGS_DEPLOYMENT=` (en Elea, `text-embedding-3-large-azure-openai`) y recrear el motor con `docker compose up -d engine`. El resto del producto sigue andando: es una degradación, no una caída.
+
 **El motor (`engine`) tarda en aparecer sano la primera vez**: es esperado con una base
 de datos nueva (migra sus tablas) — el instalador ya espera hasta 5 minutos. Si en algún
 momento el contenedor se reinicia solo una vez durante ese lapso (`docker compose ps`
@@ -1388,6 +1409,7 @@ no hace falta intervenir.
 ## Pruebas del instalador (sin Docker real)
 
 ```bash
+bash tests/test-embeddings-deployment.sh   # despliegue de embeddings del ruteo: compose (base y -ext), .env.example y README (sin Docker)
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
 bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
