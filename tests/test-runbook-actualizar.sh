@@ -191,7 +191,8 @@ chequear "Paso 9: prueba de aceptación: los tres modelos, un DNI de prueba, Cow
   grep -q "DNI" "$1" && grep -q "PDF" "$1" && grep -q "PPT" "$1" && grep -q "SVG" "$1" && grep -qi "auditor" "$1" && grep -qi "solo metadatos" "$1"' _ "$T/paso9"
 chequear "Paso 9: notas: esfuerzo de razonamiento (gpt-5.1-chat solo medium), imágenes sin filtro (MASKING_IMAGES) y los modelos no generan imágenes" bash -c '
   grep -q "reasoning_effort" "$1" && grep -q "solo acepta .medium." "$1" && grep -q "MASKING_IMAGES=pass" "$1" && grep -qi "no generan imágenes" "$1"' _ "$T/paso9"
-chequear "Paso 9: no cierra en silencio lo que no está verificado (MASKING_IMAGES y la URL del kit quedan marcados)" bash -c 'grep -q "no figura en la verificación" "$1" && grep -q "🔵" "$1"' _ "$T/paso9"
+chequear "Paso 9: imágenes sin filtro auditadas (images_unmasked) con el filtro futuro marcado 🔵, y el kit toma la URL de REDIRECT_GATEWAY_URL" bash -c 'grep -q "images_unmasked" "$1" && grep -q "🔵" "$1" && grep -q "REDIRECT_GATEWAY_URL" "$1"' _ "$T/paso9"
+chequear "Paso 6: la activación fija REDIRECT_GATEWAY_URL en el .env (la URL que alcanzan las PC por la VPN)" bash -c 'grep -q "REDIRECT_GATEWAY_URL=%s" "$1"' _ "$T/paso6"
 chequear "Paso 9: la leyenda de estado es honesta (🟡) y no se da nada por 🟢 sin prueba en vivo" bash -c 'grep -q "🟡" "$1" && ! grep -q "🟢" "$1"' _ "$T/paso9"
 chequear "Paso 9: la credencial del catálogo reemplaza al .env en el Paso 6 (el .env queda para lo heredado) y el Paso 6 ya no dice que solo cumplimiento ve los destinos" bash -c '
   grep -q "es ahora \*\*la del catálogo\*\*" "$1" && grep -qi "quedan para lo heredado" "$1" && ! grep -q "solo los ve ese" "$1" && ! grep -q "la usa el motor desde .\.env" "$1"' _ "$T/paso6"

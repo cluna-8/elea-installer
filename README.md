@@ -398,10 +398,11 @@ Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque
 ```bash
 cd ~/Eleia-cli
 ELEA_EXT_VERSION='2026-10-07'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-07)
+GW_URL='http://<servidor>:8091/api/v1/gw'               # la dirección con que las PC llegan a la pasarela por la VPN (va en los kits de Claude Desktop)
 if [[ "$ELEA_EXT_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   [ -z "$(tail -c1 .env)" ] || echo >> .env
-  sed -i '/^ELEA_REDIRECT=/d;/^ELEA_EXT_VERSION=/d' .env
-  printf 'ELEA_REDIRECT=1\nELEA_EXT_VERSION=%s\n' "$ELEA_EXT_VERSION" >> .env
+  sed -i '/^ELEA_REDIRECT=/d;/^ELEA_EXT_VERSION=/d;/^REDIRECT_GATEWAY_URL=/d' .env
+  printf 'ELEA_REDIRECT=1\nELEA_EXT_VERSION=%s\nREDIRECT_GATEWAY_URL=%s\n' "$ELEA_EXT_VERSION" "$GW_URL" >> .env
   ./install.sh
 else
   echo "PARAR: falta el tag de las imágenes -ext (ELEA_EXT_VERSION). No se tocó nada."
@@ -673,7 +674,7 @@ grupo. Qué pasa: la lista de modelos de cada llave trae solo lo suyo; un pedido
 En **Cowork**, elegir una **carpeta de trabajo** en cada tarea, mejor vacía y dedicada: sin carpeta el agente no tiene dónde escribir y falla al guardar (`FileNotFoundError`). Si una tarea falla por el modelo, se abre una tarea nueva con otro; no se reintenta en la misma.
 
 **Alternativa para repartir a muchas PC: el kit.** «Modelos» → «Kits» → Claude Desktop genera un `managed-settings.json` con la dirección, el esquema y los modelos del alcance, para repartirlo con la gestión de dispositivos (si lleva credencial, emite una llave nueva y queda auditado). **Antes de repartirlo, abrirlo y
-comprobar que `inferenceGatewayBaseUrl` sea la del servidor (`http://<servidor>:8091/api/v1/gw`) y no `http://backend:8000`**: hasta el arreglo de la URL del kit, el kit puede traer la dirección interna del contenedor, que ninguna PC alcanza. 🔵 (arreglo en curso; verificar en cada kit)
+comprobar que `inferenceGatewayBaseUrl` sea la del servidor (`http://<servidor>:8091/api/v1/gw`)**: la toma de `REDIRECT_GATEWAY_URL` (Paso 6). Si no está configurada y no se puede deducir, el kit trae el marcador `REEMPLAZAR_CON_LA_URL_DE_LA_PASARELA` y el panel avisa; nunca la dirección interna del contenedor. 🟡
 
 ```bash
 # En el servidor: la lista de modelos que ve esa llave (solo los ids publicados; sin destinos). Tiene que dar los ids del punto 4 que correspondan a su grupo.
@@ -699,8 +700,7 @@ Anotar **sin contenido** (fecha, ids, destino, postura, alcance) como evidencia.
 **11. Notas**
 
 * **Esfuerzo de razonamiento**: se ajusta solo por modelo. Si la herramienta pide un esfuerzo que el modelo no admite (`gpt-5.1-chat` solo acepta `medium`), la pasarela lo cambia al **más cercano que el destino acepta** y lo anota en la auditoría como ajuste de `reasoning_effort` (sin el valor): nunca un error por eso. 🟡
-* **Imágenes**: por ahora **salen sin filtro** (`MASKING_IMAGES=pass`; el filtro de imágenes es a futuro, 🔵). Ese valor **no figura en la verificación de la rama de integración de la 057** y no es una variable que el instalador escriba: confirmar con el equipo antes de tocarla o de afirmarlo ante un cliente.
-  Lo que sí está documentado hoy: lo que **adjunta la persona** y no se puede analizar se bloquea («El pedido no pudo protegerse…») y las capturas que devuelve una herramienta del agente se reemplazan por una nota; no hay lectura de imágenes (OCR). No dar las imágenes por protegidas hasta aclararlo.
+* **Imágenes**: por ahora **salen sin filtro** hacia los modelos que aceptan imágenes (`MASKING_IMAGES=pass`, el valor por defecto del motor; el filtro de imágenes es a futuro, 🔵): tanto las que **adjunta la persona** como las capturas que devuelve una herramienta de Cowork. Cada imagen que sale sin revisar queda en la auditoría (`images_unmasked`, conteo y tipo). El **texto** se sigue enmascarando completo. Para volver a bloquearlas: `MASKING_IMAGES=filter` en el entorno de la extensión. Si el modelo no acepta imágenes, la pasarela avisa («Este modelo no acepta imágenes») y las imágenes de mensajes anteriores se reemplazan por una nota para que la conversación siga. Probado en vivo con Claude Desktop el 7-oct. 🟡
 * **Los modelos no generan imágenes**: Cowork arma documentos, PDF y presentaciones ejecutando código, y puede **diseñar** SVG/HTML; una «imagen» generada por un modelo no existe.
 * Los síntomas por contrato (403 «Failed to authenticate» + «Modelo no disponible para tu región.», 404 de organización, 429 de límites, `FileNotFoundError`, no lee páginas) están en la guía del producto «Claude Desktop con la pasarela»; el 403 con «Failed to authenticate» **no es** un error de credenciales: es el texto de la aplicación.
 
