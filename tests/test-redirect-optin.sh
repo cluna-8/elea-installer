@@ -31,7 +31,7 @@ export AZURE_OPENAI_API_KEY=a AZURE_OPENAI_ENDPOINT=https://x AZURE_API_VERSION=
 nuevo_entorno() {
   T=$(mktemp -d); R="$T/repo"; mkdir -p "$R/proxy" "$T/home"
   cp "$AQUI"/{install.sh,activar-redirect.sh,base-motor.lib.sh,docker-compose.yml,docker-compose.redirect.yml,.env.example} "$R"/ 2>/dev/null
-  cp "$AQUI/proxy/Caddyfile" "$R/proxy/"
+  cp "$AQUI/proxy/Caddyfile" "$AQUI/proxy/https.lib.sh" "$R/proxy/"
   # respaldo.sh de mentira: anota el orden de las llamadas (el de verdad lo cubre test-base-motor.sh).
   printf '#!/usr/bin/env bash\necho respaldo >> "%s/orden"\nexit "${RESPALDO_RC:-0}"\n' "$T" > "$R/respaldo.sh"; chmod +x "$R/respaldo.sh"
   printf 'POSTGRES_PASSWORD=pw\nADMIN_PASSWORD=admin-pw\nENGINE_MASTER_KEY=sk-x\n' > "$R/.env"
@@ -420,7 +420,7 @@ chequear "marca de activación pero sin archivo de entorno: no inventa nada y lo
 echo "— T101 el proxy y el canal interno siguen cerrados con la extensión"
 M=$(ELEA_EXT_VERSION=$VERSION python3 "$RENDER" --redirect); B=$(python3 "$RENDER")
 dato() { python3 -c 'import json,sys;d=json.load(sys.stdin)["services"];print(json.dumps(eval(sys.argv[1]),sort_keys=True))' "$1"; }
-chequear "el proxy de la base sigue (servicio api-proxy publica 8091)" bash -c '[ "$1" = "[\"8091:8091\"]" ]' _ "$(dato 'd["api-proxy"]["ports"]' <<<"$M")"
+chequear "el proxy de la base sigue (servicio api-proxy publica 8091 y el HTTPS 8443)" bash -c '[ "$1" = "[\"8091:8091\", \"8443:8443\"]" ]' _ "$(dato 'd["api-proxy"]["ports"]' <<<"$M")"
 chequear "el proxy no cambia con la extensión" bash -c '[ "$1" = "$2" ]' _ "$(dato 'd["api-proxy"]' <<<"$M")" "$(dato 'd["api-proxy"]' <<<"$B")"
 chequear "el backend -ext no publica puertos propios" bash -c '[ "$1" = null ] || [ "$1" = "[]" ]' _ "$(dato 'd["backend"].get("ports")' <<<"$M")"
 chequear "nadie más publica el 8000 del backend con la extensión" bash -c '! grep -Eq "\"[0-9]+:8000\"" <<<"$1"' _ "$M"
@@ -447,7 +447,7 @@ done
 for p in /api/v1/gw /api/v1/gw/v1/models /api/v1/gw/v1/chat/completions /api/v1/redirect/health /api/v1/redirect/policy /api/v1/redirect/destinations /api/v1/catalog/models /api/v1/catalog/models/abc /health /docs; do
   chequear_no "el proxy deja pasar $p" interno "$p"
 done
-chequear "el instalador no cambia el proxy para la extensión (el Caddyfile no nombra rutas de la extensión)" bash -c '! grep -Eiq "redirect|catalog|gw" "$1"' _ "$AQUI/proxy/Caddyfile"
+chequear "el instalador no cambia el proxy para la extensión (el Caddyfile no nombra rutas de la extensión)" bash -c '! grep -v "auto_https disable_redirects" "$1" | grep -Eiq "redirect|catalog|gw"' _ "$AQUI/proxy/Caddyfile"
 chequear "antes de activar se verifica /api/v1/internal/identity por el puerto publicado (8091 por defecto)" bash -c 'grep -q "ELEA_API_URL:-http://localhost:8091" "$1" && grep -q "\$API/api/v1/internal/identity" "$1"' _ "$AQUI/activar-redirect.sh"
 
 # ───────────────────────────────────────────────────────────────────────────────────────────────

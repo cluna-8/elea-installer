@@ -1,0 +1,1 @@
+# Marcador vacío: docker compose lo monta en /certs/tls.crt y /certs/tls.key cuando no hay certificado de la empresa (PROXY_TLS_CERT / PROXY_TLS_KEY).

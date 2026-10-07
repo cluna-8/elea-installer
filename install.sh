@@ -63,6 +63,15 @@ ELEA_EXT_MIN_VERSION="2026-10-07"
 export ELEA_EXT_MIN_VERSION
 [ -n "${AZURE_OPENAI_API_KEY:-}" ] || die "Falta AZURE_OPENAI_API_KEY en .env — completalo y volvé a correr."
 
+# HTTPS del proxy (Claude Desktop exige https en la URL de la pasarela). Deja en .env los nombres del certificado
+# (PROXY_TLS_NAMES: por defecto la IP del servidor y su hostname) y el puerto (PROXY_HTTPS_PORT, 8443), y valida
+# el certificado de la empresa si se configuró (PROXY_TLS_CERT / PROXY_TLS_KEY). Antes de tocar Docker.
+# shellcheck source=proxy/https.lib.sh
+source ./proxy/https.lib.sh
+https_preparar
+# Con la extensión de redirección, la URL pública de la pasarela para los kits: https por defecto (el .env la pisa).
+[ "${ELEA_REDIRECT:-}" != 1 ] || https_fijar_url_pasarela
+
 # ── 2. Registro de imágenes ─────────────────────────────────────────────────────────
 # Las imágenes son públicas (decisión del 14-sep-2026): no hace falta login. Solo si la
 # descarga falla (imagen todavía privada, o red que exige credenciales) se pide un token.
@@ -117,6 +126,12 @@ if command -v ss >/dev/null && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq
   die "El puerto 8091 ya lo usa otro proceso (no es este instalador): liberalo y volvé a correr. Ver: ss -ltnp | grep 8091"
 fi
 
+# Lo mismo para el puerto HTTPS del proxy.
+if command -v ss >/dev/null && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PROXY_HTTPS_PORT}\$" \
+   && [ -z "$(docker ps -q -f name=^/elea-api-proxy$)" ]; then
+  die "El puerto HTTPS ${PROXY_HTTPS_PORT} ya lo usa otro proceso (no es este instalador): liberalo o poné otro en PROXY_HTTPS_PORT (.env) y volvé a correr. Ver: ss -ltnp | grep ${PROXY_HTTPS_PORT}"
+fi
+
 log "Levantando el Guardian (backend + proxy de la API + panel)"
 docker compose pull backend api-proxy frontend 2>&1 | grep -v "^ " || true
 # Juntos y en una sola orden: al actualizar una instalación vieja, el backend viejo todavía publica
@@ -129,6 +144,19 @@ for i in $(seq 1 60); do
   sleep 3
   [ "$i" -eq 60 ] && die "El backend no respondió después de 3 minutos. Revisá: ./elea-logs.sh backend"
 done
+
+# HTTPS: el proxy habla TLS con el mismo enrutamiento que el 8091. Se prueba por el puerto publicado, con el
+# primer nombre del certificado y sin validar la cadena (-k: esto comprueba el proxy, no la confianza de las PC),
+# y se exige que el plano interno siga cerrado (404) también por acá: si no, se corta la instalación.
+HTTPS_URL="https://${PROXY_TLS_NAMES%%,*}:${PROXY_HTTPS_PORT}"
+log "Comprobando el HTTPS del proxy (${HTTPS_URL})"
+for i in $(seq 1 20); do
+  curl -sk -f -o /dev/null --connect-to "::127.0.0.1:" "${HTTPS_URL}/health" && break
+  sleep 3
+  [ "$i" -eq 20 ] && die "El HTTPS del proxy no respondió (${HTTPS_URL}/health). Revisá: ./elea-logs.sh api-proxy"
+done
+cod=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --connect-to "::127.0.0.1:" "${HTTPS_URL}/api/v1/internal/identity" || true)
+[ "$cod" = 404 ] || die "/api/v1/internal/identity dio ${cod:-sin respuesta} por el HTTPS (se esperaba 404): el plano interno no está cerrado por ese puerto. No se sigue."
 
 # ── 4. Bootstrap del admin (primer login lo crea) ───────────────────────────────────
 log "Configurando el usuario administrador"
@@ -275,6 +303,12 @@ echo "  Panel del Guardian:  http://localhost:8090"
 echo "  API del Guardian:    http://localhost:8091/docs"
 echo "  Eleia Hub:           http://localhost:8095   (chat con documentos, planillas, presentaciones)"
 echo "  Plantillas (admin):  http://localhost:8097/templates   (cargar la plantilla corporativa)"
+echo "  API por HTTPS:       ${HTTPS_URL}/api/v1/gw   (Claude Desktop; nombres del certificado: ${PROXY_TLS_NAMES})"
+if [ -n "${PROXY_TLS_CERT:-}" ]; then
+  echo "                       con el certificado de la empresa (las PC ya confían en él)"
+else
+  echo "                       con la CA interna del proxy: ./exportar-ca.sh copia su raíz pública para instalarla en las PC (README, «HTTPS para Claude Desktop»)"
+fi
 echo
 echo "  Admin:  usuario 'admin', contraseña: ${ADMIN_PASSWORD}"
 echo "  (guardada en .env — no se vuelve a mostrar)"

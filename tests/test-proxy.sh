@@ -30,7 +30,7 @@ chequear "bash -n tests/test-proxy.sh" bash -n "$AQUI/tests/test-proxy.sh"
 
 echo "— compose: el proxy publica el puerto de hoy y el backend deja de publicarlo"
 chequear "existe el servicio api-proxy" bash -c '[ "$1" != null ]' _ "$(yml services api-proxy)"
-chequear "el proxy publica 8091 (el mismo puerto que usan las PC)" bash -c '[ "$1" = "[\"8091:8091\"]" ]' _ "$(yml services api-proxy ports)"
+chequear "el proxy publica 8091 (el mismo puerto que usan las PC) y el HTTPS (ver tests/test-https.sh)" bash -c '[ "$1" = "[\"8091:8091\", \"\${PROXY_HTTPS_PORT:-8443}:8443\"]" ]' _ "$(yml services api-proxy ports)"
 chequear "el backend NO tiene ports:" bash -c '[ "$1" = null ]' _ "$(yml services backend ports)"
 chequear "el backend NO publica nada con 'ports' ni en el texto" bash -c '! sed -n "/^  backend:/,/^  api-proxy:/p" "$1" | grep -Eq "^\s+ports:|8091:8000"' _ "$COMPOSE"
 chequear "el proxy va por digest (caddy@sha256:…)" bash -c 'echo "$1" | grep -Eq "caddy(:[A-Za-z0-9.-]+)?@sha256:[0-9a-f]{64}"' _ "$(yml services api-proxy image)"
@@ -67,9 +67,10 @@ chequear "existe proxy/Caddyfile" [ -s "$CADDYFILE" ]
 chequear "responde 404 a /internal" grep -Eq 'respond .*404' "$CADDYFILE"
 chequear "el resto va al backend por la red interna" grep -q 'reverse_proxy backend:8000' "$CADDYFILE"
 chequear "sin API de administración de Caddy" grep -Eq '^\s*admin off' "$CADDYFILE"
-chequear "sin TLS automático (HTTP plano de LAN, como hoy)" grep -Eq '^\s*auto_https off' "$CADDYFILE"
+chequear "el 8091 sigue en HTTP plano de LAN: sin redirección a HTTPS ni puerto 80 (el HTTPS va aparte, tests/test-https.sh)" grep -Eq '^\s*auto_https disable_redirects' "$CADDYFILE"
+chequear "…y su sitio no lleva host ni tls (solo el puerto)" bash -c '[ "$(sed -n "/^:8091 {/,/^}/p" "$1" | grep -c tls)" = 0 ]' _ "$CADDYFILE"
 chequear "escucha en 8091" grep -Eq '^:8091 \{' "$CADDYFILE"
-chequear "la regla de internal va ANTES del reverse_proxy" bash -c '[ "$(grep -n "respond.*404" "$1" | head -n1 | cut -d: -f1)" -lt "$(grep -n "reverse_proxy" "$1" | head -n1 | cut -d: -f1)" ]' _ "$CADDYFILE"
+chequear "la regla de internal va ANTES del reverse_proxy (en el fragmento «ruta» que comparten el 8091 y el HTTPS)" bash -c '[ "$(grep -n "respond.*404" "$1" | head -n1 | cut -d: -f1)" -lt "$(grep -n "reverse_proxy" "$1" | head -n1 | cut -d: -f1)" ]' _ "$CADDYFILE"
 chequear "no nombra componentes internos (white-label)" bash -c '! grep -Eiq "litellm|presenton|sentinel|guardian" "$1"' _ "$CADDYFILE"
 
 echo "— proxy/Caddyfile (corriendo Caddy de verdad contra un backend de mentira)"
@@ -104,7 +105,10 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PY
   python3 "$T/backend.py" "$P_BACK" "$T/back.log" & PID_BACK=$!
   # El Caddyfile del repo, tal cual, salvo el destino y el puerto (que en el contenedor son fijos).
-  sed -e "s|backend:8000|127.0.0.1:${P_BACK}|g" -e "s|^:8091 {|:${P_PROXY} {|" "$CADDYFILE" > "$T/Caddyfile"
+  # (El sitio HTTPS del mismo archivo queda con su CA interna para «localhost», en un puerto libre y con datos en $T:
+  # que no toque el 8443 ni el almacén de Caddy del usuario. Lo del HTTPS se prueba en tests/test-https.sh.)
+  sed -e "s|backend:8000|127.0.0.1:${P_BACK}|g" -e "s|^:8091 {|:${P_PROXY} {|" -e "s|https_port 8443|https_port $(libre)|" "$CADDYFILE" > "$T/Caddyfile"
+  export XDG_DATA_HOME="$T/data" XDG_CONFIG_HOME="$T/cfg"
   chequear "caddy validate acepta el Caddyfile" bash -c '"$1" validate --config "$2" --adapter caddyfile >/dev/null 2>&1' _ "$CADDY_BIN" "$T/Caddyfile"
   "$CADDY_BIN" run --config "$T/Caddyfile" --adapter caddyfile >"$T/caddy.log" 2>&1 & PID_CADDY=$!
   for _ in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:${P_PROXY}/" && break; sleep 0.2; done

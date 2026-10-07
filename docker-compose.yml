@@ -183,13 +183,30 @@ services:
   # Desktop y Claude Code apuntan a él) y responde 404 a /api/v1/internal/*. Es la ÚNICA ruta del
   # backend hacia afuera. Imagen fijada por digest, la misma que el panel de producción.
   # Config: ./proxy/Caddyfile (solo lectura).
+  # También publica el HTTPS (PROXY_HTTPS_PORT, 8443 por defecto) con el mismo enrutamiento: Claude Desktop
+  # exige https en la URL de la pasarela. Certificado: el de la empresa (PROXY_TLS_CERT y PROXY_TLS_KEY, rutas
+  # de archivos del servidor, montados de solo lectura) o, sin ellos, la CA interna de Caddy para los nombres
+  # de PROXY_TLS_NAMES; su raíz persiste en el volumen proxy_caddy_data (./exportar-ca.sh copia la pública).
+  # Sin certificado de la empresa se monta ./proxy/sin-certificado (vacío) en su lugar: si no, Docker crearía
+  # una carpeta con ese nombre.
   api-proxy:
     image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     container_name: elea-api-proxy
+    command: ["sh", "/usr/local/bin/arranque.sh"]
     ports:
       - "8091:8091"
+      - "${PROXY_HTTPS_PORT:-8443}:8443"
+    environment:
+      - PROXY_TLS_NAMES=${PROXY_TLS_NAMES:-localhost}
+      # Rutas de DENTRO del contenedor, y solo si hay certificado de la empresa (vacías = CA interna).
+      - PROXY_TLS_CERT=${PROXY_TLS_CERT:+/certs/tls.crt}
+      - PROXY_TLS_KEY=${PROXY_TLS_KEY:+/certs/tls.key}
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./proxy/arranque.sh:/usr/local/bin/arranque.sh:ro
+      - ${PROXY_TLS_CERT:-./proxy/sin-certificado}:/certs/tls.crt:ro
+      - ${PROXY_TLS_KEY:-./proxy/sin-certificado}:/certs/tls.key:ro
+      - proxy_caddy_data:/data
     depends_on:
       backend: { condition: service_healthy }
     networks: [elea-net]
@@ -346,6 +363,7 @@ networks:
 
 volumes:
   pgdata:
+  proxy_caddy_data:
   anythingllm_data:
   tabular_data:
   presenton_data:

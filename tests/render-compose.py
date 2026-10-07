@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Renderiza docker-compose.yml (y, con --redirect, su override) SIN Docker: expande ${VAR}, ${VAR:-d},
-${VAR-d} y ${VAR:?msg} con el entorno del proceso (anidados incluidos) y fusiona como compose (las
+${VAR-d}, ${VAR:+d} y ${VAR:?msg} con el entorno del proceso (anidados incluidos) y fusiona como compose (las
 listas se concatenan; `image` y `command` se reemplazan). Imprime JSON canónico: sirve para comparar por
 hash lo que ve `docker compose config` sin correr Docker. Solo para las pruebas del instalador.
 
@@ -31,7 +31,7 @@ def expandir(s, env):
             j += 1
         cuerpo = s[i + 2:j - 1]
         i = j
-        for op in (":-", ":?", "-", "?"):
+        for op in (":-", ":+", ":?", "-", "?"):
             k = cuerpo.find(op)
             if k > 0:
                 nombre, resto = cuerpo[:k], cuerpo[k + len(op):]
@@ -44,6 +44,8 @@ def expandir(s, env):
             out.append(valor or "")
         elif op in (":-", "-"):
             out.append(expandir(resto, env) if vacio else valor)
+        elif op == ":+":  # reemplazo solo si hay valor (no vacío)
+            out.append("" if vacio else expandir(resto, env))
         else:  # :? y ?
             if vacio:
                 raise Falta(f"{nombre}: {resto}")

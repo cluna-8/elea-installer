@@ -38,10 +38,13 @@ aisladas entre sí.
 | Plantillas de presentaciones (solo admins, misma sesión del Hub) | http://localhost:8097/templates |
 | Panel del Guardian (admin, visual) | http://localhost:8090 |
 | API del Guardian (Swagger) | http://localhost:8091/docs |
+| API por HTTPS (la URL de Claude Desktop) | `https://<servidor>:8443` (ver «HTTPS para Claude Desktop») |
 
 El puerto `8091` lo publica el **proxy de la API** (`api-proxy`), no el backend: las PC de la LAN (el panel,
 Claude Desktop y Claude Code, que apuntan a `/api/v1/gw/*`) lo usan exactamente igual que antes. Lo único que
-cambia es que el proxy responde `404` a `/api/v1/internal/*` (ver «Proxy de la API»).
+cambia es que el proxy responde `404` a `/api/v1/internal/*` (ver «Proxy de la API»). El mismo proxy publica además
+el **HTTPS** en el `8443` (`PROXY_HTTPS_PORT`), con el mismo enrutamiento: es la URL que se configura en Claude Desktop
+(ver «HTTPS para Claude Desktop»). El `8091` HTTP sigue igual para el Hub y los servicios.
 
 ## Imágenes que publica el equipo (registro `ghcr.io/cluna-8`)
 
@@ -398,7 +401,7 @@ Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque
 ```bash
 cd ~/Eleia-cli
 ELEA_EXT_VERSION='2026-10-07'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-07)
-GW_URL='http://<servidor>:8091/api/v1/gw'               # la dirección con que las PC llegan a la pasarela por la VPN (va en los kits de Claude Desktop)
+GW_URL='https://<servidor>:8443/api/v1/gw'              # la dirección HTTPS con que las PC llegan a la pasarela por la VPN (va en los kits de Claude Desktop); <servidor> = el primer nombre de PROXY_TLS_NAMES
 if [[ "$ELEA_EXT_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   [ -z "$(tail -c1 .env)" ] || echo >> .env
   sed -i '/^ELEA_REDIRECT=/d;/^ELEA_EXT_VERSION=/d;/^REDIRECT_GATEWAY_URL=/d' .env
@@ -409,6 +412,7 @@ else
 fi
 ```
 
+(`REDIRECT_GATEWAY_URL` es opcional: sin ella, el instalador usa `https://<primer nombre de PROXY_TLS_NAMES>:<PROXY_HTTPS_PORT>/api/v1/gw`; con ella, la que se escriba. El HTTPS y su certificado se preparan antes: «HTTPS para Claude Desktop».)
 `./install.sh` hace su actualización normal y, al final, `./activar-redirect.sh`: comprueba las tres condiciones, baja las `-ext`, toma su propio respaldo (si es la primera activación), escribe el entorno de la extensión (**fuera del repo, modo 600**:
 `~/.config/elea/redirect.env`, con las llaves generadas una sola vez; nunca se imprime), recrea motor, backend y panel, espera al backend (si una migración de la extensión falla, el backend **aborta** el arranque),
 comprueba que los seeds estén en la imagen y consulta `/api/v1/redirect/health`. **Cualquier respuesta que no sea 200 es un error visible.** Pegar solo `./activar-redirect.sh` no sirve: no conoce el tag mínimo y falla cerrado.
@@ -665,7 +669,7 @@ grupo. Qué pasa: la lista de modelos de cada llave trae solo lo suyo; un pedido
 | Sección | Campo | Valor |
 |---|---|---|
 | Conexión | Proveedor | **Gateway** |
-| Conexión | URL base del gateway | `http://<servidor>:8091/api/v1/gw` — **sin `/v1`** al final (la aplicación lo agrega; con `/v1` el pedido va a una ruta que no existe). HTTP plano: solo dentro de la VPN/LAN |
+| Conexión | URL base del gateway | `https://<servidor>:8443/api/v1/gw` — **sin `/v1`** al final (la aplicación lo agrega; con `/v1` el pedido va a una ruta que no existe). `<servidor>` es uno de los nombres de `PROXY_TLS_NAMES`, el primero si se entra por IP; la PC tiene que confiar en el certificado («HTTPS para Claude Desktop»). El `http://<servidor>:8091/api/v1/gw` (HTTP plano, solo dentro de la VPN/LAN) sigue funcionando para Claude Code y para lo que ya estaba probado con él. |
 | Conexión | Tipo de credencial | **Clave de API estática** (la llave del punto 8) |
 | Conexión | Esquema de autenticación | `bearer` (no `sso`) |
 | Conexión | Descubrimiento de modelos | **activado** (el selector se arma con los ids publicados para esa llave); «Lista de modelos» vacía |
@@ -674,10 +678,10 @@ grupo. Qué pasa: la lista de modelos de cada llave trae solo lo suyo; un pedido
 | Espacio de trabajo | Omitir verificación de dominio de WebFetch | **activado** (sin esto, antes de leer una página consulta a un servicio que en modo gateway no responde) |
 | Espacio de trabajo | Restricciones de Chat → Análisis avanzado de archivos | **activado** (lee adjuntos Excel, PowerPoint y PDF) |
 
-Esta configuración (conexión y espacio de trabajo) está 🟢 verificada en vivo con la aplicación real el 7-oct-2026. En **Cowork**, elegir una **carpeta de trabajo** en cada tarea, mejor vacía y dedicada: sin carpeta el agente no tiene dónde escribir y falla al guardar (`FileNotFoundError`). Si una tarea falla por el modelo, se abre una tarea nueva con otro; no se reintenta en la misma.
+Esta configuración (conexión y espacio de trabajo) está 🟢 verificada en vivo con la aplicación real el 7-oct-2026, **con la URL HTTP del `8091`**; con la URL HTTPS del `8443` (y la raíz instalada en la PC) 🟡 todavía no se probó en vivo: ver «HTTPS para Claude Desktop». En **Cowork**, elegir una **carpeta de trabajo** en cada tarea, mejor vacía y dedicada: sin carpeta el agente no tiene dónde escribir y falla al guardar (`FileNotFoundError`). Si una tarea falla por el modelo, se abre una tarea nueva con otro; no se reintenta en la misma.
 
 **Alternativa para repartir a muchas PC: el kit.** «Modelos» → «Kits» → Claude Desktop genera un `managed-settings.json` con la dirección, el esquema y los modelos del alcance, para repartirlo con la gestión de dispositivos (si lleva credencial, emite una llave nueva y queda auditado). **Antes de repartirlo, abrirlo y
-comprobar que `inferenceGatewayBaseUrl` sea la del servidor (`http://<servidor>:8091/api/v1/gw`)**: la toma de `REDIRECT_GATEWAY_URL` (Paso 6). Si no está configurada y no se puede deducir, el kit trae el marcador `REEMPLAZAR_CON_LA_URL_DE_LA_PASARELA` y el panel avisa; nunca la dirección interna del contenedor. 🟡
+comprobar que `inferenceGatewayBaseUrl` sea la del servidor (`https://<servidor>:8443/api/v1/gw`)**: la toma de `REDIRECT_GATEWAY_URL` (Paso 6; por defecto, la HTTPS del primer nombre de `PROXY_TLS_NAMES`). Si no está configurada y no se puede deducir, el kit trae el marcador `REEMPLAZAR_CON_LA_URL_DE_LA_PASARELA` y el panel avisa; nunca la dirección interna del contenedor. 🟡
 
 ```bash
 # En el servidor: la lista de modelos que ve esa llave (solo los ids publicados; sin destinos). Tiene que dar los ids del punto 4 que correspondan a su grupo.
@@ -801,7 +805,7 @@ Qué hace el instalador ahora:
 | `db-engine-init` (en `docker-compose.yml`) | Servicio de un solo disparo, idempotente: crea `ENGINE_DB` si no existe. Sirve en instalación nueva y al actualizar con datos. El motor espera a que termine. |
 | `SENTINEL_IDENTITY_URL` / `SENTINEL_AUDIT_URL` del motor | Con la base separada, la identidad de las llaves y la auditoría viven en la base del Guardian: el motor las pide por HTTP interno al backend (protegido con `ENGINE_MASTER_KEY`). **Sin ellas todas las llaves darían 401** y el tráfico dejaría de auditarse: por eso se cambian juntas con la base. El backend pasa a ser dependencia del motor (si está caído, la identidad falla cerrada). |
 | `ENGINE_IMAGE` (opcional, `.env`) | Reemplaza la imagen fijada del motor. Vacío = la del `docker-compose.yml`. |
-| `api-proxy` (en `docker-compose.yml`, config en `proxy/Caddyfile`) | Proxy delante del backend: publica `8091` y responde 404 a `/api/v1/internal/*`; el backend ya no publica puertos. Ver «Proxy de la API». |
+| `api-proxy` (en `docker-compose.yml`, config en `proxy/Caddyfile`) | Proxy delante del backend: publica `8091` (HTTP) y `8443` (HTTPS) y responde 404 a `/api/v1/internal/*` por los dos; el backend ya no publica puertos. Ver «Proxy de la API» y «HTTPS para Claude Desktop». |
 | `./respaldo.sh` | Copia de las dos bases (ver abajo). |
 | `./migrar-base-motor.sh` | Pasa una instalación vieja (base compartida) a base propia, con vuelta atrás. |
 
@@ -844,7 +848,7 @@ Notas de operación:
 - La imagen del proxy va fijada por digest en `docker-compose.yml` (la misma que usa el panel de producción);
   subirla es un cambio deliberado, por PR. Al subir de versión, correr `bash tests/test-proxy.sh` con un
   binario `caddy` de esa versión (`ELEA_CADDY_BIN=/ruta/caddy`): corre el proxy de verdad contra un backend de mentira.
-- No hay TLS: es HTTP plano de LAN, igual que hasta ahora. Para HTTPS, ponerlo detrás del ingress corporativo del cliente.
+- El `8091` es HTTP plano de LAN, igual que hasta ahora. El HTTPS (`8443`, con el mismo enrutamiento y el mismo 404 a `/api/v1/internal/*`) está en la sección siguiente.
 - Con el proxy no se puede publicar un puerto del backend por error: no hay ningún `ports:` en el backend y
   `bash tests/test-proxy.sh` falla si aparece.
 
@@ -854,6 +858,101 @@ Notas de operación:
 `docker compose up -d` a mano después de bajar el compose nuevo sin haber migrado: el motor arrancaría
 sobre una base vacía (las llaves del motor viejo quedarían en `elea_gateway`). Siempre `./install.sh`
 o `./migrar-base-motor.sh`.
+
+### HTTPS para Claude Desktop
+
+El proxy (`api-proxy`) publica, además del `8091` HTTP de siempre, un **HTTPS en el `8443`** (`PROXY_HTTPS_PORT`) con
+**el mismo enrutamiento**: todo pasa al backend, salvo `/api/v1/internal/*`, que da **404 también por el `8443`**. El Hub y los
+servicios siguen por el `8091`. La URL que se configura en Claude Desktop es `https://<servidor>:8443/api/v1/gw`
+(`<servidor>` = el primer nombre de `PROXY_TLS_NAMES`, por defecto la IP del servidor).
+
+| Variable (`.env`) | Qué es | Por defecto |
+|---|---|---|
+| `PROXY_HTTPS_PORT` | Puerto HTTPS publicado en el servidor | `8443` (dentro del contenedor es siempre 8443) |
+| `PROXY_TLS_NAMES` | IPs y/o nombres DNS con que las PC llegan al servidor, **separados por coma y sin espacios** | la IP del servidor y su hostname (`./install.sh` los completa) |
+| `PROXY_TLS_CERT`, `PROXY_TLS_KEY` | Certificado y llave **de la empresa**: rutas absolutas de archivos del servidor, **fuera del repo**, las dos juntas; se montan de solo lectura | vacías → CA interna |
+| `REDIRECT_GATEWAY_URL` | URL de la pasarela que llevan los kits de Claude Desktop | `https://<primer nombre de PROXY_TLS_NAMES>:<PROXY_HTTPS_PORT>/api/v1/gw` con la extensión de redirección; el `.env` la pisa |
+
+**Hay que elegir una de dos variantes de certificado.**
+
+**Variante A (recomendada): certificado de la empresa.** Un certificado emitido por la CA de la empresa (o una pública) para el
+nombre con que las PC llegan al servidor (p. ej. `elea.empresa.com.ar`; el servidor puede tener también la IP como SAN). Las PC ya
+confían en la CA de la empresa: **no hay nada que instalar en ellas** y se renueva con el proceso de certificados de la empresa.
+
+```bash
+# En el servidor (rutas fuera del repo; la llave solo legible por quien administra el servidor):
+sudo install -d -m 755 /etc/ssl/elea
+sudo install -m 644 elea.crt /etc/ssl/elea/elea.crt          # certificado + cadena intermedia, en PEM
+sudo install -m 600 elea.key /etc/ssl/elea/elea.key          # llave privada, en PEM (nunca dentro del repo)
+# En ~/Eleia-cli/.env:
+#   PROXY_TLS_NAMES=elea.empresa.com.ar
+#   PROXY_TLS_CERT=/etc/ssl/elea/elea.crt
+#   PROXY_TLS_KEY=/etc/ssl/elea/elea.key
+```
+
+`./install.sh` valida antes de tocar nada que las dos rutas existan, sean absolutas, no estén dentro del repo y que el certificado sea un PEM
+válido; el proxy lo vuelve a comprobar al arrancar y se niega a hacerlo con uno solo de los dos. Para renovar: reemplazar los archivos y
+`docker compose restart api-proxy`. `PROXY_TLS_NAMES` tiene que ser el nombre (o los nombres) del certificado: el proxy enruta por ellos.
+
+**Variante B: CA interna del proxy + GPO.** Sin `PROXY_TLS_CERT`/`PROXY_TLS_KEY`, el proxy emite el certificado con su propia CA para
+los nombres de `PROXY_TLS_NAMES`. Esa CA **persiste** en el volumen `proxy_caddy_data` (`/data` del contenedor): la raíz que se instala en las PC no cambia
+al actualizar ni al recrear el contenedor; **solo cambia si se borra el volumen** (`docker compose down -v`, que no se hace). El certificado
+del servidor lo renueva solo; la raíz (válida 10 años) se instala **una vez** en cada PC:
+
+```bash
+cd ~/Eleia-cli
+./exportar-ca.sh                    # copia SOLO la raíz pública a ~/eleia-ca-raiz.crt (nunca la llave) e imprime la huella y las instrucciones
+```
+
+* **Windows, por GPO** (`gpmc.msc` → una GPO vinculada a las PC → Configuración del equipo → Directivas → Configuración de Windows → Configuración de seguridad →
+  Directivas de clave pública → **Entidades de certificación raíz de confianza** → Importar `eleia-ca-raiz.crt`; en cada PC `gpupdate /force`). Alternativas
+  por línea de comandos: `certutil -addstore -f Root eleia-ca-raiz.crt` (una PC, como administrador) o `certutil -dspublish -f eleia-ca-raiz.crt RootCA` (todo el dominio).
+  Cerrar del todo Claude Desktop y volver a abrirlo.
+* **macOS**: `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain eleia-ca-raiz.crt`, o un perfil de configuración (MDM) con un payload «Certificado».
+* **Claude Code** usa su propio almacén: `export NODE_EXTRA_CA_CERTS=/ruta/a/eleia-ca-raiz.crt` y `export ANTHROPIC_BASE_URL=https://<servidor>:8443/api/v1/gw`.
+* **Cotejar la huella** SHA-256 que imprime `./exportar-ca.sh` con la de la raíz que llegó a la PC: `openssl x509 -in eleia-ca-raiz.crt -noout -fingerprint -sha256` (macOS/Linux) o `certutil -dump eleia-ca-raiz.crt` (Windows, muestra «Cert Hash(sha256)»).
+
+**Qué nombre usar.** Una PC que entra por una **IP** no manda el nombre en el saludo TLS y el proxy le presenta el certificado del **primer** nombre de
+`PROXY_TLS_NAMES`: por eso `./install.sh` pone la IP del servidor primero. Entrar por otra IP de la lista no valida; por un nombre DNS de la lista, sí. Si las PC usan
+un nombre, ponerlo primero. La URL, el certificado y `PROXY_TLS_NAMES` tienen que decir lo mismo.
+
+**Verificar desde una PC** (no desde el servidor). Con la CA interna, `curl` falla **sin** la raíz y funciona **con** ella:
+
+```bash
+curl -v https://172.16.0.120:8443/health                                    # sin la raíz: «SSL certificate problem: unable to get local issuer certificate»
+curl -v --cacert eleia-ca-raiz.crt https://172.16.0.120:8443/health         # con la raíz: HTTP 200
+curl -s -o /dev/null -w '%{http_code}\n' --cacert eleia-ca-raiz.crt https://172.16.0.120:8443/api/v1/internal/identity   # 404
+# Con el certificado de la empresa el primero ya da 200 sin --cacert.
+```
+
+Después, **Claude Desktop** con `https://<servidor>:8443/api/v1/gw` («Developer» → «Configure Third-Party Inference…», Paso 9): si lista los modelos, la PC confía en el certificado.
+Si da un error de certificado, la raíz no está instalada en esa PC (o se entró por un nombre que no está en `PROXY_TLS_NAMES`).
+
+**Runbook del servidor** (con corte corto: `./install.sh` recrea el proxy para publicar el `8443`):
+
+```bash
+cd ~/Eleia-cli
+git pull                                  # trae el HTTPS del proxy
+# Variante A: cargar PROXY_TLS_NAMES, PROXY_TLS_CERT y PROXY_TLS_KEY en .env (arriba). Variante B: no hace falta nada; opcional fijar los nombres:
+#   PROXY_TLS_NAMES=172.16.0.120,elea-srv   (la IP que usan las PC primero)
+nano .env
+./install.sh                              # completa PROXY_TLS_NAMES/PROXY_HTTPS_PORT si faltan, levanta el proxy con el 8443 y comprueba /health y el 404 de internal por HTTPS
+./exportar-ca.sh                          # solo Variante B: copia la raíz pública a ~/eleia-ca-raiz.crt y muestra las instrucciones de GPO/macOS
+docker compose ps api-proxy               # sano; 0.0.0.0:8091 y 0.0.0.0:8443
+curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:8443/health                       # 200 (-k: solo comprueba el proxy)
+curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:8443/api/v1/internal/identity     # 404
+```
+
+Si el puerto `8443` lo usa otro proceso, `./install.sh` se detiene antes y lo dice: liberarlo o poner otro en `PROXY_HTTPS_PORT`. El firewall del servidor tiene que dejar
+pasar el puerto HTTPS desde la VPN/LAN, igual que el `8091`. Los logs: `./elea-logs.sh api-proxy`.
+
+**Estado de esta función** (leyenda: 🟢 verificado en vivo, 🟡 cubierto por pruebas pero sin prueba en vivo, 🔵 a futuro):
+
+* 🟢 Verificado en local con Docker el 7-oct-2026 (proxy levantado con el `docker-compose.yml` real en una carpeta de prueba): `curl -k https://localhost:8443/health` → 200; `/api/v1/internal/identity` → **404 por el 8443** (y por el 8091); `./exportar-ca.sh` copia solo la raíz pública y esa raíz **valida** el certificado (`curl --cacert`) por nombre y por IP; sin ella `curl` falla; la raíz es **la misma** después de bajar y volver a levantar el proxy (`docker compose down` sin `-v`); con un certificado de la empresa montado, el proxy sirve ese y `./exportar-ca.sh` se niega (no hay CA interna que exportar); con solo uno de los dos archivos, el proxy no arranca y lo dice. **Claude Code** (`claude -p`, `CLAUDE_CONFIG_DIR` propio, `ANTHROPIC_BASE_URL=https://localhost:8443/api/v1/gw` y `NODE_EXTRA_CA_CERTS` con la raíz) llegó al backend de prueba por el HTTPS (recibió el 401 sin llave); sin `NODE_EXTRA_CA_CERTS` falla con «SSL certificate verification failed».
+* 🟡 Sin probar en vivo: **Claude Desktop** contra la URL HTTPS en una PC real, la instalación de la raíz por GPO en Windows y por MDM/llavero en macOS (las instrucciones son las del sistema operativo y no se ejecutaron acá), y el certificado de la empresa de verdad (se probó uno de prueba).
+* 🔵 A futuro: la rotación programada de la raíz de la CA interna (hoy dura 10 años y solo cambia si se borra el volumen).
+
+Pruebas sin Docker: `bash tests/test-https.sh` (con `ELEA_CADDY_BIN=/ruta/a/caddy` corre el proxy de verdad y valida la CA, el 404 por HTTPS, la persistencia y el certificado de la empresa).
 
 ### Separar la base del motor — runbook de producción (VPN + consola web)
 
@@ -1137,8 +1236,9 @@ curl -s -o /dev/null -w '%{http_code}\n' http://<servidor>:8091/api/v1/internal/
 > «Actualizar el servidor de Elea (057 + bases separadas)». Esta sección es la referencia de lo que va en la PC de cada persona.
 
 Una **llave por persona** (con **1.000.000 tpm y 120 rpm**: con los límites de fábrica el agente de Cowork recibe 429): se crea en el panel del Guardian (`http://<servidor>:8090`, «Usuarios & Presupuestos» → «Llaves Virtuales») y se entrega en mano o por el gestor de contraseñas de la
-empresa (canal seguro), nunca por chat ni correo. La URL de la pasarela es `http://<servidor>:8091/api/v1/gw` (`<servidor>` = el nombre o la IP
-con que las PC llegan al servidor **por la VPN**). El tráfico va por **HTTP plano**: solo dentro de la VPN/LAN de la empresa.
+empresa (canal seguro), nunca por chat ni correo. La URL de la pasarela es `https://<servidor>:8443/api/v1/gw` para Claude Desktop (ver «HTTPS para Claude Desktop») y
+`http://<servidor>:8091/api/v1/gw` para el resto (`<servidor>` = el nombre o la IP con que las PC llegan al servidor **por la VPN**). El
+tráfico del `8091` va por **HTTP plano**: solo dentro de la VPN/LAN de la empresa.
 
 * **Claude Code** (variables de entorno de la PC de la persona):
 
@@ -1149,7 +1249,7 @@ con que las PC llegan al servidor **por la VPN**). El tráfico va por **HTTP pla
   # export ANTHROPIC_DEFAULT_SONNET_MODEL=<ID PUBLICADO>
   ```
 
-* **Claude Desktop** (modo de terceros, pasarela): `inferenceProvider = gateway`, `inferenceGatewayBaseUrl = http://<servidor>:8091/api/v1/gw`,
+* **Claude Desktop** (modo de terceros, pasarela): `inferenceProvider = gateway`, `inferenceGatewayBaseUrl = https://<servidor>:8443/api/v1/gw`,
   la llave virtual como credencial, `inferenceGatewayAuthScheme = bearer` y el descubrimiento de modelos activado (así lista los modelos publicados). Por la pantalla de la aplicación («Developer» → «Configure Third-Party Inference…»): en *Conexión*, Gateway, la URL **sin `/v1`**, «Clave de API estática»
   y `bearer`; en *Espacio de trabajo*, hosts de egreso «`* Permitir todo`», «Omitir verificación de dominio de WebFetch» y «Análisis avanzado de archivos» activados; y en Cowork, una **carpeta de trabajo** por tarea. Con el `managed-settings.json` del kit de «Modelos» → «Kits», comprobar antes que `inferenceGatewayBaseUrl` sea la del servidor y no `http://backend:8000`. Todo, con sus pruebas de aceptación, en el Paso 9.
   Si un rechazo de residencia (403) aparece con «Failed to authenticate» antepuesto, es el texto de Claude Desktop, no un error de la llave.
@@ -1291,6 +1391,7 @@ no hace falta intervenir.
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
 bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
+bash tests/test-https.sh         # HTTPS del proxy: nombres, certificado de la empresa, ./exportar-ca.sh, cableado; con `caddy`, la CA interna y el 404 de internal por HTTPS
 bash tests/test-redirect-optin.sh    # extensión de redirección: opt-in, imágenes -ext, entorno 600, gate, salud, apagar (Docker y curl simulados)
 bash tests/test-runbook-redirect.sh  # runbook de la extensión: respaldo, activar, verificar, configurar herramientas, vuelta atrás
 bash tests/test-runbook-actualizar.sh  # runbook consolidado de actualización (057 + bases separadas): pasos 0 a 9 (incluye el Paso 9 de modelos y Claude Desktop), comandos que existen, marcadores
