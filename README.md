@@ -439,6 +439,25 @@ cd ~/Eleia-cli
 docker compose up -d engine backend                    # recrea con el .env nuevo; conserva las imágenes -ext (COMPOSE_FILE ya está en .env)
 ```
 
+**Despliegue de embeddings del ruteo (`ROUTER_EMBEDDINGS_DEPLOYMENT`).** El ruteo semántico (el que elige modelo según el contenido) calcula sus vectores con un modelo de embeddings **del mismo recurso de Azure**. Azure lo identifica por el **nombre del despliegue**, que elige quien creó el recurso, no por el nombre del modelo. Si en `.env` no está o está vacía, el motor usa `text-embedding-3-large` (lo de siempre). **En Elea el despliegue se llama `text-embedding-3-large-azure-openai`**, así que en `.env` va:
+
+```
+ROUTER_EMBEDDINGS_DEPLOYMENT=text-embedding-3-large-azure-openai
+```
+
+Para ver cómo se llaman los despliegues del recurso, usando la llave que ya está en `.env` **sin imprimirla** (va al curl por la entrada estándar, no por la línea de comandos ni por pantalla):
+
+```bash
+cd ~/Eleia-cli
+KEY=$(grep -m1 '^AZURE_OPENAI_API_KEY=' .env | cut -d= -f2-)
+BASE=$(grep -m1 '^AZURE_OPENAI_ENDPOINT=' .env | cut -d= -f2-)
+printf 'api-key: %s\n' "$KEY" | curl -sS -H @- "${BASE%/}/openai/deployments?api-version=2022-12-01" \
+  | python3 -c 'import json,sys; [print(d["id"], "->", d.get("model"), d.get("status")) for d in json.load(sys.stdin)["data"]]'
+unset KEY BASE
+```
+
+Cada línea es `nombre-del-despliegue -> modelo estado`: se copia el de `text-embedding-3-large` a `ROUTER_EMBEDDINGS_DEPLOYMENT` y se recrea el motor (`docker compose up -d engine`; `restart` **no** relee `.env`). Si no sale ninguna línea, la salida es un error (por ejemplo `401`: la llave no es de ese recurso, o una dirección mal escrita): no se sigue hasta que el listado salga. Esto necesita el motor con la imagen que lee la variable; con una anterior se ignora y rige el nombre de siempre.
+
 **Variables opcionales del enmascarado (no hace falta tocarlas).** La 057 agregó estas variables; **todas tienen un valor por defecto seguro** y el instalador **no las escribe**: rige el default.
 Llegan al motor y al backend por el mismo archivo de entorno de la extensión (`redirect.env`; `EXTRA_ENV_FILE`), y ni el compose ni el instalador definen ninguna, así que lo que se agregue ahí **no se pisa** (lo comprueba `bash tests/test-redirect-optin.sh`).
 
@@ -1279,6 +1298,8 @@ Si el 404 aparece en `/api/v1/gw/*` o en el resto de la API, no es esto: revisar
 **`./install.sh` dice que el puerto 8091 lo usa otro proceso**: el proxy de la API necesita ese puerto. `ss -ltnp | grep 8091`
 muestra quién lo tiene; liberarlo y volver a correr.
 
+**El ruteo semántico cae siempre al modelo por defecto** (la decisión de ruteo queda degradada con el motivo `embed_error`; en `./elea-logs.sh backend` se lee «Auto-router: fallo al embeber»): lo más común es que el **despliegue de embeddings** no se llame como cree el motor. En `./elea-logs.sh engine` aparece algo como `DeploymentNotFound` / «The API deployment for this resource does not exist». Arreglo: listar los despliegues del recurso con la llave de `.env` (README, «Despliegue de embeddings del ruteo»), poner el nombre correcto en `ROUTER_EMBEDDINGS_DEPLOYMENT=` (en Elea, `text-embedding-3-large-azure-openai`) y recrear el motor con `docker compose up -d engine`. El resto del producto sigue andando: es una degradación, no una caída.
+
 **El motor (`engine`) tarda en aparecer sano la primera vez**: es esperado con una base
 de datos nueva (migra sus tablas) — el instalador ya espera hasta 5 minutos. Si en algún
 momento el contenedor se reinicia solo una vez durante ese lapso (`docker compose ps`
@@ -1288,6 +1309,7 @@ no hace falta intervenir.
 ## Pruebas del instalador (sin Docker real)
 
 ```bash
+bash tests/test-embeddings-deployment.sh   # despliegue de embeddings del ruteo: compose (base y -ext), .env.example y README (sin Docker)
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
 bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
