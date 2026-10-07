@@ -169,8 +169,9 @@ p9() { grep -qF -- "$1" "$T/paso9"; }
 chequear "Paso 9: lo hace el admin de la empresa y cumplimiento solo la residencia de la ficha" bash -c 'grep -q "administrador de la empresa" "$1" && grep -q "cumplimiento" "$1" && grep -qi "lo que es suyo" "$1"' _ "$T/paso9"
 chequear "Paso 9: las credenciales no se editan (se crea otra y se reasigna) y el endpoint va en cada modelo (Dirección base)" bash -c 'grep -q "no se editan" "$1" && grep -q "reasign" "$1" && grep -q "Dirección base" "$1"' _ "$T/paso9"
 chequear "Paso 9: credencial de Azure con la versión de API 2025-04-01-preview" p9 '2025-04-01-preview'
-chequear "Paso 9: modelos de Azure por nombre de despliegue (gpt-5.6-luna, gpt-5.1-chat, gpt-5.4-mini, gpt-4o-mini) y archivar los 4 sembrados" bash -c '
-  for m in gpt-5.6-luna gpt-5.1-chat gpt-5.4-mini gpt-4o-mini; do grep -q -- "$m" "$1" || exit 1; done; grep -qi "archivar" "$1" && grep -qi "nombre del despliegue" "$1"' _ "$T/paso9"
+chequear "Paso 9: modelos de Azure por nombre de despliegue (gpt-5.6-luna, gpt-5.1-chat, gpt-5.4-mini, gpt-4o-mini); los 4 sembrados son de instalación: el admin no los ve y los archiva cumplimiento" bash -c '
+  for m in gpt-5.6-luna gpt-5.1-chat gpt-5.4-mini gpt-4o-mini; do grep -q -- "$m" "$1" || exit 1; done
+  grep -qi "nombre del despliegue" "$1" && grep -qi "nivel instalación" "$1" && grep -qi "el .admin. no los ve" "$1" && grep -qi "cumplimiento.* los archiva" "$1"' _ "$T/paso9"
 chequear "Paso 9: ficha (Microsoft Corporation, Entrena con datos No, Retención cero No, DPA) y resultado «Dentro de AMERICAS» / Estándar" bash -c '
   grep -q "Microsoft Corporation" "$1" && grep -q "Entrena con datos" "$1" && grep -q "Retención cero" "$1" && grep -q "DPA" "$1" && grep -q "Dentro de AMERICAS" "$1" && grep -q "Estándar" "$1"' _ "$T/paso9"
 chequear "Paso 9: la región real del recurso es un dato a confirmar (US en Elea), no una afirmación" bash -c 'grep -q "región real del recurso" "$1" && grep -qi "a confirmar" "$1"' _ "$T/paso9"
@@ -193,7 +194,10 @@ chequear "Paso 9: notas: esfuerzo de razonamiento (gpt-5.1-chat solo medium), im
   grep -q "reasoning_effort" "$1" && grep -q "solo acepta .medium." "$1" && grep -q "MASKING_IMAGES=pass" "$1" && grep -qi "no generan imágenes" "$1"' _ "$T/paso9"
 chequear "Paso 9: imágenes sin filtro auditadas (images_unmasked) con el filtro futuro marcado 🔵, y el kit toma la URL de REDIRECT_GATEWAY_URL" bash -c 'grep -q "images_unmasked" "$1" && grep -q "🔵" "$1" && grep -q "REDIRECT_GATEWAY_URL" "$1"' _ "$T/paso9"
 chequear "Paso 6: la activación fija REDIRECT_GATEWAY_URL en el .env (la URL que alcanzan las PC por la VPN)" bash -c 'grep -q "REDIRECT_GATEWAY_URL=%s" "$1"' _ "$T/paso6"
-chequear "Paso 9: la leyenda de estado es honesta (🟡) y no se da nada por 🟢 sin prueba en vivo" bash -c 'grep -q "🟡" "$1" && ! grep -q "🟢" "$1"' _ "$T/paso9"
+chequear "Paso 9: la leyenda de estado es honesta: queda 🟡 y 🔵 para lo no probado y cada 🟢 cita la fecha de la prueba en vivo (7-oct-2026)" bash -c '
+  grep -q "🟡" "$1" && grep -q "🔵" "$1" && grep -q "🟢" "$1" && ! grep "🟢" "$1" | grep -qv "7-oct"' _ "$T/paso9"
+chequear "Paso 9: dice qué NO se probó en vivo (OpenRouter/Kimi, grupos, kit en una PC, Bedrock, filtro de imágenes, nivel 2, región del recurso)" bash -c '
+  for k in OpenRouter "los grupos" "managed-settings.json" Bedrock "filtro de imágenes" "nivel 2" "región real del recurso"; do grep -qi -- "$k" "$1" || exit 1; done' _ "$T/paso9"
 chequear "Paso 9: la credencial del catálogo reemplaza al .env en el Paso 6 (el .env queda para lo heredado) y el Paso 6 ya no dice que solo cumplimiento ve los destinos" bash -c '
   grep -q "es ahora \*\*la del catálogo\*\*" "$1" && grep -qi "quedan para lo heredado" "$1" && ! grep -q "solo los ve ese" "$1" && ! grep -q "la usa el motor desde .\.env" "$1"' _ "$T/paso6"
 chequear "Paso 7 c): remite al Paso 9 (necesita modelos publicados antes) y d) aclara que ahí no queda nada servido" bash -c 'grep -q "Paso 9" "$1"' _ "$T/paso7"

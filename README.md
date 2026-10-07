@@ -427,8 +427,8 @@ curl -s -w '\n%{http_code}\n' http://localhost:8091/api/v1/redirect/health      
 
 Si se fijó el digest de las `-ext` (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE` en `.env`, de la línea `PINNED …` que imprime `publish-elea.sh`), `docker inspect` muestra esa referencia en lugar del tag.
 **Falta, en el panel** (`http://<servidor>:8090`, «Modelos»): dar de alta los modelos, cargar sus fichas, publicarlos, mapearlos y crear las llaves. **Lo hace el `admin` de la empresa**, en el orden del **Paso 9**; el usuario de
-cumplimiento (`super_admin`, Paso 4) interviene solo en lo que es suyo: los campos de residencia de la ficha (entidad responsable, jurisdicciones de entidad, control e inferencia, retención cero). El instalador siembra cuatro modelos de Azure de **ejemplo**; el `admin` los ve en
-«Modelos» → «Destinos» y archiva los que no use. Sin la jurisdicción de inferencia en la ficha, el modelo se rechaza.
+cumplimiento (`super_admin`, Paso 4) interviene solo en lo que es suyo: los campos de residencia de la ficha (entidad responsable, jurisdicciones de entidad, control e inferencia, retención cero). El instalador siembra cuatro modelos de Azure de **ejemplo** como entradas de **instalación**: **solo el usuario de cumplimiento (`super_admin`) las ve y las administra**; el `admin` de la empresa **no las ve** (su lista de «Destinos» sale vacía) hasta que cumplimiento se las **ofrece**
+(botón «Ofrecer»), y aun así no las edita ni las archiva (verificado el 7-oct, T102: `admin` → 0 entradas, cumplimiento → 4). El `admin` da de alta **los suyos** (Paso 9, punto 2) y cumplimiento archiva los de ejemplo que no se usen. Sin la jurisdicción de inferencia en la ficha, el modelo se rechaza.
 
 La **credencial de Azure** es ahora **la del catálogo**: se carga en «Modelos» → «Credenciales» (clave y versión de API `2025-04-01-preview`; la dirección va en cada modelo, «Editar» → «Dirección base») y **no se edita**: para cambiarla se crea otra y se reasigna (Paso 9, punto 1).
 Las variables `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` y `AZURE_API_VERSION` de `.env` **quedan para lo heredado** (lo que ya las leía antes de la redirección); los modelos nuevos usan la credencial del catálogo. Si se cambian en `.env`, recrear lo que las lee
@@ -507,7 +507,7 @@ Pedirle algo que incluya datos **inventados** (nunca los de una persona real), p
 
 * **Qué se espera.** El dato personal **sale enmascarado** hacia el modelo (seudonimización reversible: el modelo recibe un marcador, no el valor) y **vuelve restaurado** a la persona: la respuesta se lee normal. Que el enmascarado se aplicó se ve en la **auditoría**, que
   guarda **solo metadatos** (jamás el texto del pedido ni el dato): el id pedido y el destino real, la postura (`default_posture_applied`, `masked_all` por defecto), si el destino estaba en región y el alcance del enmascarado (`masking_scope`).
-  Se mira en el panel (`http://<servidor>:8090`, pantalla «Logs de Auditoría»; esa pantalla existe, pero qué columnas muestra de un pedido redirigido —postura, alcance— **no se verificó**: sin la credencial de Azure no hubo pedidos redirigidos en T102; si no aparecen ahí, están en la tabla `audit_logs`). Con la postura por defecto (`masked_all`) todo lo redirigido sale enmascarado, sea cual sea el destino.
+  Se mira en el panel (`http://<servidor>:8090`, pantalla «Logs de Auditoría»; el destino real de un pedido redirigido se confirmó ahí y en los registros el 7-oct, al cambiar el destino de `sonnet`; qué columnas muestra de postura y alcance **no se verificó** en pantalla: si no aparecen, están en la tabla `audit_logs`). Con la postura por defecto (`masked_all`) todo lo redirigido sale enmascarado, sea cual sea el destino.
 * Anotar **sin contenido** (fecha, id del modelo, destino, postura, `masking_scope`) como evidencia; no copiar el prompt ni la respuesta.
 
 **d) En el panel** (verificado en T102): entrar al panel (se probó con un usuario `admin` de la organización), «Modelos» → «Routing» → «Redirección» muestra las pestañas Destinos, Modelos publicados, Reglas, Política, Residencia, Vista previa, Kits, Fidelidad y Costos. Con eso **no** queda nada servido: dar de alta los modelos, publicarlos, mapearlos y crear las llaves es el **Paso 9**, que hace el `admin` de la empresa.
@@ -606,8 +606,10 @@ Lo hace el **administrador de la empresa** (`admin`) desde la consola (`http://<
 ficha de cada modelo (entidad responsable y jurisdicciones de entidad, control e inferencia, más «Retención cero»). Si un `admin` intenta escribirlos, el panel responde 403; el resto de la ficha sí lo edita él.
 Requiere haber terminado el Paso 7 (la extensión activa y `/api/v1/redirect/health` en 200). Sin corte del servicio: todo es configuración en el panel.
 
-> **Estado.** 🟡 Los pasos del cliente (dirección, esquema, descubrimiento, espacio de trabajo y carpeta de Cowork) se verificaron en vivo con la aplicación real sobre la misma base del producto; **en este servidor** el
-> contrato está cubierto por pruebas con un proveedor **simulado** y la prueba con Azure real y la aplicación es la del punto 10: hasta que se corra y se anote, nada de lo de abajo está verificado en vivo. Lo que no existe todavía se marca 🔵.
+> **Estado.** 🟢 **Verificado en vivo el 7-oct-2026** con Claude Desktop contra Azure, en una instalación hecha con este instalador y `ELEA_REDIRECT=1` (T102): conexión por gateway (URL `/api/v1/gw`, `bearer`, llave estática, descubrimiento); chat con `haiku` → `gpt-5.4-mini`, `sonnet` → `gpt-5.1-chat` y
+> `opus` → `gpt-5.6-luna`; cambio de destino de `sonnet` en «Reglas» sin tocar el cliente; DNI enmascarado hacia Azure; Cowork con PDF y presentación; diseño de SVG; lectura de imágenes (`sonnet` tras marcar «Imágenes» en su ficha); llave con 1.000.000 tpm / 120 rpm por «Editar límites»; esfuerzo ajustado; etiqueta «id pedido»;
+> credencial de Azure del catálogo con `2025-04-01-preview`; alta de modelos y ficha. 🟡 **No se probó en vivo** (se marca 🟡 o 🔵 donde aparece): OpenRouter/Kimi u otro proveedor que no sea Azure, los grupos (solo pruebas automatizadas), el kit `managed-settings.json` instalado en una PC, Bedrock, Claude Code, el filtro de imágenes (a futuro, 🔵),
+> la vuelta atrás de nivel 2 y la región real del recurso de Azure (US, a confirmar). La generación de imágenes no existe 🔵.
 > Fuente: la guía «Claude Desktop con la pasarela» y la de «Redirección de modelos» del producto (rama de integración de la 057) y su verificación.
 
 Los datos de Azure se anotaron en el Paso 0 y viven en `.env` del servidor (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`); **no se copian a este documento**: se pegan en el panel.
@@ -615,13 +617,13 @@ Los datos de Azure se anotaron en el Paso 0 y viven en `.env` del servidor (`AZU
 **1. Credencial de Azure** — «Modelos» → «Credenciales» → crear. Proveedor Azure; **clave** (la del recurso) y **versión de API `2025-04-01-preview`** (o posterior: con una anterior el panel avisa, sin bloquear, y el producto sube la versión solo para las
 herramientas y el razonamiento). La **dirección del recurso no va en la credencial**: va en cada modelo («Editar» → «Dirección base», punto 2). Las credenciales son **de solo escritura y no se editan**: el panel nunca devuelve la clave. Para
 cambiarla (rotación, versión de API) se **crea otra credencial y se reasigna** a cada modelo que usaba la anterior (en «Editar», campo credencial). Cuando ya no la use ninguno, se borra la vieja.
-🟡 Se verifica en el punto 2 (la credencial por sí sola no prueba nada: se prueba con el modelo).
+🟢 Verificado en vivo el 7-oct-2026 (la credencial por sí sola no prueba nada: se prueba con el modelo, punto 2).
 
 **2. Dar de alta los modelos** — «Modelos» → «Destinos» → «Dar de alta modelos». Proveedor **Azure**, el modelo **se busca por el nombre del despliegue** tal como existe en el recurso: `gpt-5.6-luna`, `gpt-5.1-chat`, `gpt-5.4-mini` y `gpt-4o-mini`
 (los que no se vayan a usar, no se dan de alta). Asignar la credencial del punto 1 y cargar «Dirección base» (la del recurso, la misma de `AZURE_OPENAI_ENDPOINT`). Al guardar, el producto hace una **prueba mínima contra el recurso** («Verificar despliegue»):
 si el nombre no es un despliegue existente, la entrada queda **inactiva** con el motivo «El despliegue … no existe en el recurso configurado» hasta que pase. Declarar también la **ventana de contexto real**, las capacidades que acepta (**Imágenes** y **PDF**
 donde corresponda: sin «Imágenes», la pasarela reemplaza las imágenes por una nota), la **salida máxima** real y los parámetros no soportados (por ejemplo `temperature`).
-Los **cuatro modelos de Azure que sembró el instalador** son de ejemplo: **archivar** los que no se usen (no se borran). 🟡
+Los **cuatro modelos de Azure que sembró el instalador** son de ejemplo y de **nivel instalación**: el `admin` no los ve; **cumplimiento** (`super_admin`) los archiva si no se usan (no se borran) o los ofrece a la empresa. 🟢 (alta y verificación de despliegue en vivo el 7-oct-2026)
 
 **3. Ficha de cada modelo** — pestaña «Ficha». Quién escribe cada campo: los cinco primeros, **cumplimiento** (`super_admin`); el resto, el `admin`.
 
@@ -635,19 +637,19 @@ Los **cuatro modelos de Azure que sembró el instalador** son de ejemplo: **arch
 | Mecanismo de transferencia | contrato / cláusulas contractuales | `admin` |
 | DPA | el acuerdo de tratamiento de datos de Microsoft, si la empresa lo tiene firmado (adjuntarlo o referenciarlo) | `admin` |
 
-**Resultado esperado:** junto a cada modelo, el semáforo dice **Dentro de AMERICAS** y **Estándar** (no «Sin clasificar»). Con jurisdicción de inferencia vacía el modelo no sirve a nadie, aunque esté dado de alta. 🟡
+**Resultado esperado:** junto a cada modelo, el semáforo dice **Dentro de AMERICAS** y **Estándar** (no «Sin clasificar»). Con jurisdicción de inferencia vacía el modelo no sirve a nadie, aunque esté dado de alta. 🟢 (ficha cargada y modelos sirviendo en vivo el 7-oct-2026; la región real del recurso sigue **a confirmar**)
 Las jurisdicciones de la tabla son datos de la ficha: nada de esto es una afirmación legal del producto (la base de las transferencias internacionales —Ley 25.326, art. 12— la cubre quien opera la instalación, por fuera del sistema).
 
 **4. Modelos publicados** — «Modelos» → «Routing» → «Redirección» → «Modelos publicados». Cara **Claude**, uno por nivel: `claude-opus-5-5` (nivel *opus*), `claude-sonnet-5-5` (*sonnet*) y `claude-haiku-4-5` (*haiku*). El prefijo `claude` lo exige el panel y es lo que
-la herramienta reconoce. **Etiqueta: «id pedido»**: la persona ve el mismo id que pidió y **nunca a qué modelo va** (ni en la lista ni en las respuestas). **Alcance**: toda la **organización**, o un **grupo** (punto 7); gana el más específico. 🟡
+la herramienta reconoce. **Etiqueta: «id pedido»**: la persona ve el mismo id que pidió y **nunca a qué modelo va** (ni en la lista ni en las respuestas). **Alcance**: toda la **organización**, o un **grupo** (punto 7); gana el más específico. 🟢 (etiqueta «id pedido» verificada en vivo el 7-oct-2026; el alcance por grupo, 🟡)
 
 **5. Reglas y política** — pestaña «Reglas»: una regla por id publicado, con el **mismo alcance** que el id: `claude-opus-5-5` → `gpt-5.6-luna`, `claude-sonnet-5-5` → `gpt-5.1-chat`, `claude-haiku-4-5` → `gpt-5.4-mini`. Opcionalmente, un destino de respaldo (si el principal falla, responde el
 siguiente y la auditoría lo anota). Después, pestaña «Política»: **encendida** para el alcance. **Sin la política encendida el id se manda tal cual al proveedor y falla.** Antes de usar la aplicación, la **«Vista previa»**: cada id tiene que resolver a su
-modelo y ninguno aparecer como descartado (un modelo fuera de la postura de residencia **desaparece del selector**: es el comportamiento seguro y se corrige en la ficha o en la postura, no en el cliente). 🟡
+modelo y ninguno aparecer como descartado (un modelo fuera de la postura de residencia **desaparece del selector**: es el comportamiento seguro y se corrige en la ficha o en la postura, no en el cliente). 🟢 (verificado en vivo el 7-oct-2026)
 
 **6. Cambiar el destino de un tier sin tocar a los clientes** — en «Reglas», editar la regla del id y cambiar el destino principal; por ejemplo `claude-sonnet-5-5` pasa de `gpt-5.1-chat` a un modelo de **OpenRouter**, dado de alta antes con su propia **credencial de OpenRouter** (punto 1, otro proveedor), su
 lista obligatoria de «Proveedores permitidos» (sin ella el alta da 422) y su ficha **con la jurisdicción del proveedor final de la lista, no la de OpenRouter**. Comprobar con la «Vista previa». El cliente sigue pidiendo el mismo id, ve la misma etiqueta y recibe el mismo id en `model`:
-no se reinstala ni se reconfigura nada; solo cambia la ventana de contexto del destino y la auditoría registra el destino real de cada pedido. 🟡 (cubierto con un proveedor simulado; sin prueba en vivo)
+no se reinstala ni se reconfigura nada; solo cambia la ventana de contexto del destino y la auditoría registra el destino real de cada pedido. 🟡 (cubierto con un proveedor simulado; sin prueba en vivo). 🟢 El cambio de destino entre dos modelos **de Azure** (`claude-sonnet-5-5`: de `gpt-5.1-chat` a `gpt-5.6-luna`) sí se verificó en vivo el 7-oct-2026, confirmado en los registros y en la auditoría.
 
 **7. Grupos: quién ve qué** — un grupo **«Todos»** que ve los tres ids (y los extra que se publiquen con su alcance) y un grupo **«Solo Azure»** que ve únicamente los que van a Azure. Se arma así: (a) los tres ids de la familia, **alcance organización**, con una regla de
 organización hacia Azure; (b) un id extra (por ejemplo uno que va al modelo de OpenRouter) con **alcance de grupo «Todos»** y su regla del mismo alcance; (c) en la pestaña «Acceso», un **perfil de acceso** «Solo Azure» que **incluye solo el proveedor Azure**, asignado al
@@ -656,7 +658,7 @@ grupo. Qué pasa: la lista de modelos de cada llave trae solo lo suyo; un pedido
 
 **8. Llave por persona** — «Usuarios & Presupuestos» → «Llaves Virtuales» → «Generar Llave Virtual», herramienta **Claude Desktop**, a nombre de la persona (o del equipo responsable). **Límites: 1.000.000 tpm y 120 rpm.** Con los de fábrica (100.000 tpm / 60 rpm) entran 2 o 3 pedidos por minuto
 (cada pedido de Claude Desktop pesa 35.000–67.000 tokens), el agente de Cowork recibe 429 y reintenta hasta 10 veces. La llave que emite el **kit** de «Modelos» → «Kits» ya nace con esos límites; una llave **ya existente** (o una generada a mano) se corrige con **«Editar límites»**, sin emitir otra
-(rige de inmediato; si el motor no responde, el panel lo avisa y no cambia nada; solo el rol `admin`). Se entrega por el gestor de contraseñas de la empresa, nunca por chat ni correo. 🟡
+(rige de inmediato; si el motor no responde, el panel lo avisa y no cambia nada; solo el rol `admin`). Se entrega por el gestor de contraseñas de la empresa, nunca por chat ni correo. 🟢 «Editar límites» verificado en vivo el 7-oct-2026; 🟡 los límites con que nace la llave del kit, sin prueba en vivo.
 
 **9. Claude Desktop en la PC de la persona** — sin iniciar sesión. «Help» → «Troubleshooting» → «Enable Developer Mode»; luego «Developer» → «Configure Third-Party Inference…» («Configurar inferencia de terceros»); al terminar «Apply Changes» → «Save & Restart» y salir **del todo** de la aplicación antes de volver a abrirla.
 
@@ -667,11 +669,12 @@ grupo. Qué pasa: la lista de modelos de cada llave trae solo lo suyo; un pedido
 | Conexión | Tipo de credencial | **Clave de API estática** (la llave del punto 8) |
 | Conexión | Esquema de autenticación | `bearer` (no `sso`) |
 | Conexión | Descubrimiento de modelos | **activado** (el selector se arma con los ids publicados para esa llave); «Lista de modelos» vacía |
+| Conexión | Usar 1M de contexto por defecto | **desactivado** (evita que arranque en la variante de 1M si el destino no la tiene) |
 | Espacio de trabajo | Hosts de egreso permitidos | **`* Permitir todo`** (o la lista que la empresa autorice): sin ella Cowork y Code no salen a internet |
 | Espacio de trabajo | Omitir verificación de dominio de WebFetch | **activado** (sin esto, antes de leer una página consulta a un servicio que en modo gateway no responde) |
 | Espacio de trabajo | Restricciones de Chat → Análisis avanzado de archivos | **activado** (lee adjuntos Excel, PowerPoint y PDF) |
 
-En **Cowork**, elegir una **carpeta de trabajo** en cada tarea, mejor vacía y dedicada: sin carpeta el agente no tiene dónde escribir y falla al guardar (`FileNotFoundError`). Si una tarea falla por el modelo, se abre una tarea nueva con otro; no se reintenta en la misma.
+Esta configuración (conexión y espacio de trabajo) está 🟢 verificada en vivo con la aplicación real el 7-oct-2026. En **Cowork**, elegir una **carpeta de trabajo** en cada tarea, mejor vacía y dedicada: sin carpeta el agente no tiene dónde escribir y falla al guardar (`FileNotFoundError`). Si una tarea falla por el modelo, se abre una tarea nueva con otro; no se reintenta en la misma.
 
 **Alternativa para repartir a muchas PC: el kit.** «Modelos» → «Kits» → Claude Desktop genera un `managed-settings.json` con la dirección, el esquema y los modelos del alcance, para repartirlo con la gestión de dispositivos (si lleva credencial, emite una llave nueva y queda auditado). **Antes de repartirlo, abrirlo y
 comprobar que `inferenceGatewayBaseUrl` sea la del servidor (`http://<servidor>:8091/api/v1/gw`)**: la toma de `REDIRECT_GATEWAY_URL` (Paso 6). Si no está configurada y no se puede deducir, el kit trae el marcador `REEMPLAZAR_CON_LA_URL_DE_LA_PASARELA` y el panel avisa; nunca la dirección interna del contenedor. 🟡
@@ -695,12 +698,12 @@ grep -o '"inferenceGatewayBaseUrl"[^,}]*' "<ruta-del-managed-settings.json>"    
 | SVG | «diseñame un logo como SVG» | el SVG se genera y se guarda (los modelos **no generan imágenes**; sí diseñan SVG/HTML) |
 | Auditoría | «Logs de Auditoría» (y, si no aparece ahí, la tabla `audit_logs`) | por pedido: id pedido y destino real, postura (`default_posture_applied`, `masked_all` por defecto), alcance del enmascarado (`masking_scope`); **solo metadatos**: nunca el texto ni el DNI |
 
-Anotar **sin contenido** (fecha, ids, destino, postura, alcance) como evidencia.
+Anotar **sin contenido** (fecha, ids, destino, postura, alcance) como evidencia. 🟢 Hechas en vivo el 7-oct-2026, salvo el detalle de postura y alcance en pantalla (ver el Paso 7, c).
 
 **11. Notas**
 
-* **Esfuerzo de razonamiento**: se ajusta solo por modelo. Si la herramienta pide un esfuerzo que el modelo no admite (`gpt-5.1-chat` solo acepta `medium`), la pasarela lo cambia al **más cercano que el destino acepta** y lo anota en la auditoría como ajuste de `reasoning_effort` (sin el valor): nunca un error por eso. 🟡
-* **Imágenes**: por ahora **salen sin filtro** hacia los modelos que aceptan imágenes (`MASKING_IMAGES=pass`, el valor por defecto del motor; el filtro de imágenes es a futuro, 🔵): tanto las que **adjunta la persona** como las capturas que devuelve una herramienta de Cowork. Cada imagen que sale sin revisar queda en la auditoría (`images_unmasked`, conteo y tipo). El **texto** se sigue enmascarando completo. Para volver a bloquearlas: `MASKING_IMAGES=filter` en el entorno de la extensión. Si el modelo no acepta imágenes, la pasarela avisa («Este modelo no acepta imágenes») y las imágenes de mensajes anteriores se reemplazan por una nota para que la conversación siga. Probado en vivo con Claude Desktop el 7-oct. 🟡
+* **Esfuerzo de razonamiento**: se ajusta solo por modelo. Si la herramienta pide un esfuerzo que el modelo no admite (`gpt-5.1-chat` solo acepta `medium`), la pasarela lo cambia al **más cercano que el destino acepta** y lo anota en la auditoría como ajuste de `reasoning_effort` (sin el valor): nunca un error por eso. 🟢 (verificado en vivo el 7-oct-2026 con `gpt-5.1-chat`)
+* **Imágenes**: por ahora **salen sin filtro** hacia los modelos que aceptan imágenes (`MASKING_IMAGES=pass`, el valor por defecto del motor; el filtro de imágenes (`filter`) existe pero no se probó en vivo: a futuro, 🔵): tanto las que **adjunta la persona** como las capturas que devuelve una herramienta de Cowork. Cada imagen que sale sin revisar queda en la auditoría (`images_unmasked`, conteo y tipo). El **texto** se sigue enmascarando completo. Para volver a bloquearlas: `MASKING_IMAGES=filter` en el entorno de la extensión. Si el modelo no acepta imágenes, la pasarela avisa («Este modelo no acepta imágenes») y las imágenes de mensajes anteriores se reemplazan por una nota para que la conversación siga. La lectura de imágenes con `haiku`, `opus` y `sonnet` (este tras marcar «Imágenes» en su ficha) se probó en vivo con Claude Desktop el 7-oct-2026 🟢; el modelo tiene que tener marcado «Imágenes» en su ficha.
 * **Los modelos no generan imágenes**: Cowork arma documentos, PDF y presentaciones ejecutando código, y puede **diseñar** SVG/HTML; una «imagen» generada por un modelo no existe.
 * Los síntomas por contrato (403 «Failed to authenticate» + «Modelo no disponible para tu región.», 404 de organización, 429 de límites, `FileNotFoundError`, no lee páginas) están en la guía del producto «Claude Desktop con la pasarela»; el 403 con «Failed to authenticate» **no es** un error de credenciales: es el texto de la aplicación.
 
@@ -1051,7 +1054,7 @@ con los modelos de Azure de Elea que el administrador de la empresa publica en e
 
 > **Estado de la verificación.** Este procedimiento se probó con un Docker simulado (`bash tests/test-redirect-optin.sh`, `bash tests/test-runbook-redirect.sh`), con `docker compose config -q` y,
 > en T102 (7-oct-2026), con **contenedores reales**: activación con `ELEA_REDIRECT=1`, salud 200, plano interno 404 (desde el servidor y desde la IP de la LAN), consola y «Routing» → «Redirección», y el
-> nivel 1 de la vuelta atrás (`EVIDENCIA-T102.md`). **No se probó con contenedores** el nivel 2 ni una conversación con un destino Azure (falta la credencial del owner).
+> nivel 1 de la vuelta atrás (`EVIDENCIA-T102.md`). **No se probó con contenedores** el nivel 2, el respaldo en código con la fila de región borrada ni una migración rota a propósito. Sobre esa misma instalación, el owner probó en vivo el 7-oct-2026 Claude Desktop contra Azure (conexión por gateway, los tres niveles, cambio de destino, DNI enmascarado, Cowork, imágenes: ver el Paso 9); **Claude Code** y el kit `managed-settings.json` instalado en una PC siguen sin probarse en vivo.
 >
 > **Tag mínimo.** El instalador solo activa la extensión con una `ELEA_EXT_VERSION` igual o posterior a `ELEA_EXT_MIN_VERSION`, la fecha del primer juego de imágenes que trae el chequeo de origen
 > del canal interno. Hoy esa constante (en `install.sh`) vale `2026-10-07`: el candidato construido en T102, **todavía no publicado** (ver «Imágenes del candidato» en el runbook). Con una fecha anterior,

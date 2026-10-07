@@ -74,6 +74,7 @@ chequear "nivel 2: toma un respaldo del estado actual antes de restaurar" bash -
 
 echo "— honestidad de la verificación"
 chequear "dice qué se probó con contenedores reales (T102) y qué NO (nivel 2, conversación con el modelo)" bash -c 'grep -qiE "no se prob" "$1" && grep -qiE "contenedores reales" "$1" && grep -q "T102" "$1"' _ "$SEC"
+chequear "dice que Claude Desktop contra Azure se probó en vivo el 7-oct-2026 y que Claude Code y el kit en una PC siguen sin probarse en vivo" bash -c 'grep -q "7-oct-2026" "$1" && grep -q "Claude Code" "$1" && grep -q "managed-settings.json" "$1" && grep -qiE "siguen sin probarse en vivo" "$1"' _ "$SEC"
 
 echo "— los comandos del runbook existen y tienen sintaxis válida"
 awk '/^```bash$/{b=1;n++;next} /^```$/{b=0;next} b{print > ("'"$SEC"'.bloque" n)}' "$SEC"
