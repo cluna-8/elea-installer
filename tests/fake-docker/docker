@@ -18,6 +18,8 @@ case "${1:-}" in
         # Comando del backend `python -m src.cli crear-super-admin` (contrato: contraseña por stdout en
         # `PASSWORD=<valor>`, mensajes por stderr; exit 0 creado, 3 ya hay un super_admin, otro = error).
         case "$*" in
+          # Raíz pública de la CA interna del proxy (exportar-ca.sh): FAKE_CA_FILE es el archivo que «contiene» el contenedor.
+          *root.crt*) [ -f "${FAKE_CA_FILE:-/no/existe}" ] || { echo "cat: can't open 'root.crt': No such file or directory" >&2; exit 1; }; cat "$FAKE_CA_FILE"; exit 0 ;;
           # Archivo de seeds dentro de la imagen: FAKE_SEED_MISSING lista nombres que NO están.
           *"test -f"*) for f in ${FAKE_SEED_MISSING:-}; do case "$*" in *"$f"*) exit 1 ;; esac; done; exit 0 ;;
           *sentinel.catalog.seed*) exit "${FAKE_CATALOG_RC:-0}" ;;

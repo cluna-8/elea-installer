@@ -1,5 +1,6 @@
 # Proxy delante del backend (servicio `api-proxy`): la puerta de la API para las PC de la LAN.
-# Publica el mismo puerto de siempre (8091) y deja pasar todo al backend, salvo el plano interno.
+# Publica el mismo puerto de siempre (8091, HTTP) y el HTTPS (8443 dentro del contenedor; en el servidor,
+# PROXY_HTTPS_PORT) y deja pasar todo al backend, salvo el plano interno, con el MISMO enrutamiento en los dos.
 #
 # Capa 3 de la defensa de `/api/v1/internal/*` (identidad y auditoría del motor, que se piden con el
 # secreto compartido ENGINE_MASTER_KEY). Ese plano se habla SOLO por la red interna de compose, entre
@@ -11,13 +12,28 @@
 #     ya decodificado, el mismo que ve el backend);
 #   · el backend no publica ningún puerto: no hay otra puerta.
 # `INTERNAL_ALLOWED_CIDRS=auto` en el backend es la capa 2 (origen de red); este archivo, la 3.
-# HTTP plano de LAN, igual que hoy: sin TLS automático ni API de administración.
+# HTTPS (para Claude Desktop, que exige https en la URL de la pasarela):
+#   · Sin PROXY_TLS_CERT / PROXY_TLS_KEY: CA interna de Caddy (`tls internal`) para los nombres de PROXY_TLS_NAMES
+#     (IPs y/o DNS). La CA vive en /data (volumen `proxy_caddy_data`): mientras no se borre, la raíz que se instaló
+#     en las PC sigue valiendo. ./exportar-ca.sh copia la raíz PÚBLICA (nunca la llave).
+#   · Con PROXY_TLS_CERT y PROXY_TLS_KEY (certificado de la empresa, montados de solo lectura): se usan esos.
+# Las variables las normaliza y valida proxy/arranque.sh antes de arrancar Caddy (nombres con espacios en vez de
+# comas, y una variable vacía es una variable ausente).
+# Sin redirección HTTP→HTTPS (el 8091 sigue siendo HTTP plano para el Hub y los servicios) y sin instalar la raíz
+# en el sistema del contenedor.
 {
 	admin off
-	auto_https off
+	auto_https disable_redirects
+	skip_install_trust
+	persist_config off
+	https_port 8443
+	# Quien entra por IP no manda SNI y Caddy lo busca por la IP LOCAL de la conexión (dentro de Docker, la del
+	# contenedor): sin esto no encontraría ningún certificado. Es el primer nombre de PROXY_TLS_NAMES.
+	default_sni {$PROXY_TLS_PRIMERO:localhost}
 }
 
-:8091 {
+# El enrutamiento, una sola vez para los dos puertos.
+(ruta) {
 	@interno path_regexp "(?i)(^|/)internal(/|$)"
 	respond @interno 404
 
@@ -25,4 +41,14 @@
 	reverse_proxy backend:8000 {
 		flush_interval -1
 	}
+}
+
+# HTTP plano de LAN, igual que hoy.
+:8091 {
+	import ruta
+}
+
+{$PROXY_TLS_NAMES:localhost} {
+	tls {$PROXY_TLS_CERT:internal} {$PROXY_TLS_KEY}
+	import ruta
 }

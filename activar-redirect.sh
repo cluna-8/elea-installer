@@ -23,6 +23,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=base-motor.lib.sh
 source ./base-motor.lib.sh
+# shellcheck source=proxy/https.lib.sh
+source ./proxy/https.lib.sh
 
 # El mínimo lo fija install.sh (o quien llama); un valor puesto en .env no lo puede bajar.
 MINIMA_FIJADA="${ELEA_EXT_MIN_VERSION-}"
@@ -103,6 +105,9 @@ activar() {
     || die "ELEA_EXT_VERSION=${ELEA_EXT_VERSION} es anterior al mínimo ${ELEA_EXT_MIN_VERSION} (el primer backend con el chequeo de origen del canal interno): no se activa. Usá una versión >= ${ELEA_EXT_MIN_VERSION}."
 
   ruta_entorno
+  # URL pública de la pasarela para los kits: si no hay una en .env, https://<primer nombre de PROXY_TLS_NAMES>:<puerto>/api/v1/gw
+  # (el .env la pisa). Antes de recrear el backend, que es quien la lee.
+  https_fijar_url_pasarela
   command -v docker >/dev/null || die "Falta Docker."
   local v
   v=$(docker compose version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)
@@ -204,7 +209,8 @@ if s.get("backend", {}).get("ports"):
   fi
 
   echo
-  echo "  Extensión activa. Pasarela para Claude Desktop y Claude Code: ${API}/api/v1/gw"
+  echo "  Extensión activa. Pasarela para Claude Desktop y Claude Code: ${REDIRECT_GATEWAY_URL:-${API}/api/v1/gw}"
+  [ -z "${REDIRECT_GATEWAY_URL:-}" ] || echo "  (Claude Desktop pide https: si el proxy usa su CA interna, ./exportar-ca.sh copia la raíz para las PC. README, «HTTPS para Claude Desktop».)"
   echo "  Falta (en el panel, «Modelos»): jurisdicción de inferencia y entidad responsable de cada destino, y una llave por persona."
   echo "  Vuelta atrás y verificaciones: README, «Extensión de redirección de modelos»."
 }
