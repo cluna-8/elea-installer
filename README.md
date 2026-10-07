@@ -156,7 +156,7 @@ cumplimiento», «Extensión de redirección de modelos»).
 >
 > **Imágenes del candidato (no publicadas).** Se construyeron en local, con los mismos Dockerfile y contextos de `deploy/release/publish-elea.sh` (repo `elea`, rama final de la 057, `8dfb40c`) y **sin
 > subirlas a ningún registro**, con el tag `2026-10-07` (base) y `2026-10-07-ext`. Publicarlas es una decisión aparte del owner: `VERSION=2026-10-07 deploy/release/publish-elea.sh`, ya logueado en
-> el registro. `ELEA_EXT_MIN_VERSION` en `install.sh` ya vale `2026-10-07` y el Paso 6 usa ese mismo tag: **no quedan marcadores por completar**. Si el release sale con otra fecha, tiene que ser
+> el registro. `ELEA_EXT_MIN_VERSION` en `install.sh` ya vale `2026-10-08` y el Paso 6 usa ese mismo tag: **no quedan marcadores por completar**. Si el release sale con otra fecha, tiene que ser
 > **igual o posterior** a `2026-10-07` y construida desde esa rama o una posterior; ese tag es el que se pone en `ELEA_EXT_VERSION`. Las referencias por digest de las `-ext`
 > (`BACKEND_EXT_IMAGE`, `FRONTEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE`, opcionales) salen de las líneas `PINNED …` de ese release.
 
@@ -255,12 +255,12 @@ git fetch origin && git log --oneline HEAD..origin/main
 git pull origin main
 git log -1 --format='instalador nuevo: %h %ad %s' --date=short
 docker compose config -q && echo "compose OK"
-grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # 2026-10-07: el Paso 6 necesita un ELEA_EXT_VERSION igual o posterior
+grep -n '^ELEA_EXT_MIN_VERSION=' install.sh            # 2026-10-08: el Paso 6 necesita un ELEA_EXT_VERSION igual o posterior
 ls -l respaldo.sh migrar-base-motor.sh crear-super-admin.sh activar-redirect.sh docker-compose.redirect.yml proxy/Caddyfile
 ```
 
 **Verificar.** `git pull` termina sin conflictos; el último commit es el esperado; `compose OK`; los seis archivos de la última línea existen (los scripts, con permiso de ejecución).
-`ELEA_EXT_MIN_VERSION` tiene que dar una fecha (`2026-10-07` en este instalador); si no, el instalador es anterior a T102 y el Paso 6 se va a negar (falla cerrado, sin tocar nada). Repetir este Paso 2.
+`ELEA_EXT_MIN_VERSION` tiene que dar una fecha (`2026-10-08` en este instalador); si no, el instalador es anterior a T102 y el Paso 6 se va a negar (falla cerrado, sin tocar nada). Repetir este Paso 2.
 
 **Si falla**
 
@@ -397,7 +397,7 @@ Copiar esa carpeta también **fuera del servidor**. Después, activar. El bloque
 
 ```bash
 cd ~/Eleia-cli
-ELEA_EXT_VERSION='2026-10-07'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-07)
+ELEA_EXT_VERSION='2026-10-08'                          # el tag de las imágenes -ext (AAAA-MM-DD); si el release sale con otra fecha, esa (>= 2026-10-07)
 GW_URL='http://<servidor>:8091/api/v1/gw'               # la dirección con que las PC llegan a la pasarela por la VPN (va en los kits de Claude Desktop)
 if [[ "$ELEA_EXT_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   [ -z "$(tail -c1 .env)" ] || echo >> .env
@@ -1049,8 +1049,8 @@ igual se hace con copia previa:
    o, solo para una prueba, en `.env` como `ENGINE_IMAGE=…`.
 3. `./install.sh`, y verificar con `./migrar-base-motor.sh --verificar`.
 
-El digest que trae este repo es el de la etiqueta `2026-10-07` (`sha256:ded7b34d…a84e4`), con los arreglos de la base de la 057
-(detección de llaves, enmascarado y caché). Tiene la misma LiteLLM que las `2026-09-17` (`sha256:1928af9d…6189dafe`) y `2026-09-14`
+El digest que trae este repo es el de la etiqueta `2026-10-08` (`sha256:520a8d72…1abd7`): la `2026-10-07` (arreglos de la base de la 057:
+detección de llaves, enmascarado y caché) más `ROUTER_EMBEDDINGS_DEPLOYMENT`. Tiene la misma LiteLLM que las `2026-09-17` (`sha256:1928af9d…6189dafe`) y `2026-09-14`
 (1.92.0 / proxy-extras 0.4.74, verificado el 7-oct), así que pasar de una a otra no trae migraciones del motor.
 
 ## Extensión de redirección de modelos (opcional, apagada por defecto)

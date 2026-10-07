@@ -59,7 +59,7 @@ set -a; source .env; set +a
 # .env no pueda bajarlo. 2026-10-07 = la fecha del primer juego de imágenes (base y -ext) construido desde la rama
 # final de la 057 (prueba T102); una versión publicada anterior no trae ese chequeo. «PENDIENTE-PRIMER-RELEASE»
 # (el valor anterior) hacía que ELEA_REDIRECT=1 no se pudiera activar nunca.
-ELEA_EXT_MIN_VERSION="2026-10-07"
+ELEA_EXT_MIN_VERSION="2026-10-08"
 export ELEA_EXT_MIN_VERSION
 [ -n "${AZURE_OPENAI_API_KEY:-}" ] || die "Falta AZURE_OPENAI_API_KEY en .env — completalo y volvé a correr."
 
