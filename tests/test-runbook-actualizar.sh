@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Pruebas del runbook consolidado «Actualizar el servidor de Elea (057 + bases separadas)» (README.md, T103): que sea UN
-# orden ejecutable (pasos 0 a 8, cada uno con su verificación y su «si falla»), que cada comando exista en este repo
+# orden ejecutable (pasos 0 a 9, cada uno con su verificación y su «si falla»), que cada comando exista en este repo
 # (scripts, opciones, contenedores, servicios), que tenga sintaxis válida, que deje un marcador explícito en vez de inventar
-# el tag de las imágenes -ext, que nombre los dos niveles de vuelta atrás y que no traiga secretos. No usa Docker.
+# el tag de las imágenes -ext, que nombre los dos niveles de vuelta atrás, que el Paso 9 (modelos y Claude Desktop) traiga los puntos clave y que no traiga secretos. No usa Docker.
 # Correr:  bash tests/test-runbook-actualizar.sh
 set -uo pipefail
 AQUI="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,16 +25,16 @@ EXT="$T/extension"
 awk '/^## Extensión de redirección de modelos/{d=1;print;next} d&&/^## /{exit} d' "$README" > "$EXT"
 tiene() { grep -qF -- "$1" "$SEC"; }
 
-# Un archivo por paso: $T/paso0 … $T/paso8 (todo lo que va hasta el siguiente «### Paso»).
+# Un archivo por paso: $T/paso0 … $T/paso9 (todo lo que va hasta el siguiente «### Paso»).
 awk -v dir="$T" '/^### Paso [0-9]+ /{n=$3; f=dir "/paso" n} f{print > f}' "$SEC"
 # Bloques de comandos (```bash) de cada paso: $T/paso<N>.bloques
-for n in 0 1 2 3 4 5 6 7 8; do
+for n in 0 1 2 3 4 5 6 7 8 9; do
   [ -f "$T/paso$n" ] && awk '/^```bash$/{b=1;next} /^```$/{b=0;next} b' "$T/paso$n" > "$T/paso$n.bloques"
 done
 
-echo "— un orden: pasos 0 a 8, cada uno con su verificación y su «si falla»"
+echo "— un orden: pasos 0 a 9, cada uno con su verificación y su «si falla»"
 prev=0
-for n in 0 1 2 3 4 5 6 7 8; do
+for n in 0 1 2 3 4 5 6 7 8 9; do
   chequear "existe el «Paso $n»" [ -s "$T/paso$n" ]
   l=$(grep -nE "^### Paso $n " "$SEC" | head -n1 | cut -d: -f1)
   chequear "el «Paso $n» viene después del anterior" bash -c '[ -n "$1" ] && [ "$1" -gt "$2" ]' _ "$l" "$prev"
@@ -43,10 +43,10 @@ for n in 0 1 2 3 4 5 6 7 8; do
   chequear "el «Paso $n» dice cómo se verifica (**Verificar**)" grep -q '^\*\*Verificar' "$T/paso$n"
   chequear "el «Paso $n» dice qué hacer si falla (**Si falla**)" grep -q '^\*\*Si falla' "$T/paso$n"
 done
-for par in "0:[Pp]recondicion" "1:[Rr]espaldo" "2:[Ii]nstalador" "3:[Ss]eparar la base del motor" "4:super_admin" "5:sin redirecci" "6:[Aa]ctivar" "7:[Vv]erificar" "8:[Vv]uelta atr"; do
+for par in "0:[Pp]recondicion" "1:[Rr]espaldo" "2:[Ii]nstalador" "3:[Ss]eparar la base del motor" "4:super_admin" "5:sin redirecci" "6:[Aa]ctivar" "7:[Vv]erificar" "8:[Vv]uelta atr" "9:[Mm]odelos y Claude Desktop"; do
   chequear "el título del «Paso ${par%%:*}» nombra lo que hace (${par#*:})" grep -Eq "^### Paso ${par%%:*} .*${par#*:}" "$SEC"
 done
-chequear "no hay un «Paso 9»: son nueve pasos, 0 a 8" bash -c '! grep -Eq "^### Paso 9 " "$1"' _ "$SEC"
+chequear "no hay un «Paso 10»: son diez pasos, 0 a 9" bash -c '! grep -Eq "^### Paso 10 " "$1"' _ "$SEC"
 
 echo "— el orden de los comandos importa"
 chequear "Paso 0: anota imagen y versión del motor (--inventario), imágenes en marcha, disco y revisión de la base" bash -c '
@@ -111,8 +111,8 @@ chequear "...y el unset de esas variables también" bash -c '
 
 echo "— los comandos existen en este repo"
 cat "$T"/paso?.bloques > "$T/todos.sh"
-chequear "hay bloques de comandos en todos los pasos" bash -c '[ "$(ls "$1"/paso?.bloques | wc -l)" = 9 ]' _ "$T"
-for n in 0 1 2 3 4 5 6 7 8; do chequear "bash -n del Paso $n" bash -n "$T/paso$n.bloques"; done
+chequear "hay bloques de comandos en todos los pasos" bash -c '[ "$(ls "$1"/paso?.bloques | wc -l)" = 10 ]' _ "$T"
+for n in 0 1 2 3 4 5 6 7 8 9; do chequear "bash -n del Paso $n" bash -n "$T/paso$n.bloques"; done
 chequear "todo ./script.sh del runbook existe y es ejecutable" bash -c 'for s in $(grep -ohE "\./[a-z-]+\.sh" "$1" | sort -u); do [ -x "$2/${s#./}" ] || { echo "falta $s" >&2; exit 1; }; done' _ "$SEC" "$AQUI"
 # Cada opción --xxx que el runbook le pasa a un script del repo está en el código de ese script.
 opciones_ok() {
@@ -163,6 +163,39 @@ for k in MASKING_NONCE_KEY MASKING_ANALYSIS_CACHE_ENABLED MASKING_ANALYSIS_CACHE
 done
 chequear "aclara que S14_EXEMPT_POSITIONS no es una variable (es una tabla del código) y que las exenciones opcionales están apagadas por defecto" bash -c '
   grep -q "S14_EXEMPT_POSITIONS" "$1" && grep -qiE "no es una variable|tabla del c[oó]digo" "$1" && grep -qiE "apagadas? por defecto" "$1"' _ "$SEC"
+
+echo "— Paso 9: modelos y Claude Desktop (lo hace el admin; cumplimiento solo lo suyo)"
+p9() { grep -qF -- "$1" "$T/paso9"; }
+chequear "Paso 9: lo hace el admin de la empresa y cumplimiento solo la residencia de la ficha" bash -c 'grep -q "administrador de la empresa" "$1" && grep -q "cumplimiento" "$1" && grep -qi "lo que es suyo" "$1"' _ "$T/paso9"
+chequear "Paso 9: las credenciales no se editan (se crea otra y se reasigna) y el endpoint va en cada modelo (Dirección base)" bash -c 'grep -q "no se editan" "$1" && grep -q "reasign" "$1" && grep -q "Dirección base" "$1"' _ "$T/paso9"
+chequear "Paso 9: credencial de Azure con la versión de API 2025-04-01-preview" p9 '2025-04-01-preview'
+chequear "Paso 9: modelos de Azure por nombre de despliegue (gpt-5.6-luna, gpt-5.1-chat, gpt-5.4-mini, gpt-4o-mini) y archivar los 4 sembrados" bash -c '
+  for m in gpt-5.6-luna gpt-5.1-chat gpt-5.4-mini gpt-4o-mini; do grep -q -- "$m" "$1" || exit 1; done; grep -qi "archivar" "$1" && grep -qi "nombre del despliegue" "$1"' _ "$T/paso9"
+chequear "Paso 9: ficha (Microsoft Corporation, Entrena con datos No, Retención cero No, DPA) y resultado «Dentro de AMERICAS» / Estándar" bash -c '
+  grep -q "Microsoft Corporation" "$1" && grep -q "Entrena con datos" "$1" && grep -q "Retención cero" "$1" && grep -q "DPA" "$1" && grep -q "Dentro de AMERICAS" "$1" && grep -q "Estándar" "$1"' _ "$T/paso9"
+chequear "Paso 9: la región real del recurso es un dato a confirmar (US en Elea), no una afirmación" bash -c 'grep -q "región real del recurso" "$1" && grep -qi "a confirmar" "$1"' _ "$T/paso9"
+chequear "Paso 9: ids publicados claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5 con etiqueta «id pedido»" bash -c '
+  grep -q "claude-opus-5-5" "$1" && grep -q "claude-sonnet-5-5" "$1" && grep -q "claude-haiku-4-5" "$1" && grep -q "id pedido" "$1"' _ "$T/paso9"
+chequear "Paso 9: reglas tier → destino (opus→gpt-5.6-luna, sonnet→gpt-5.1-chat, haiku→gpt-5.4-mini) y política encendida" bash -c '
+  grep -q "claude-opus-5-5. → .gpt-5.6-luna" "$1" && grep -q "claude-sonnet-5-5. → .gpt-5.1-chat" "$1" && grep -q "claude-haiku-4-5. → .gpt-5.4-mini" "$1" && grep -qi "política.*encendida\|encendida.*política" "$1"' _ "$T/paso9"
+chequear "Paso 9: cambiar el destino de un tier (a OpenRouter, con su credencial) sin tocar a los clientes" bash -c 'grep -q "OpenRouter" "$1" && grep -qi "credencial de OpenRouter" "$1" && grep -qi "sin tocar a los clientes" "$1"' _ "$T/paso9"
+chequear "Paso 9: grupos «Todos» y «Solo Azure» (alcance de grupo y perfil de acceso por proveedor)" bash -c 'grep -q "Todos" "$1" && grep -q "Solo Azure" "$1" && grep -qi "perfil de acceso" "$1" && grep -qi "alcance de grupo" "$1"' _ "$T/paso9"
+chequear "Paso 9: llave por persona con 1.000.000 tpm y 120 rpm, Editar límites y el kit que ya nace así" bash -c 'grep -q "1.000.000 tpm" "$1" && grep -q "120 rpm" "$1" && grep -q "Editar límites" "$1" && grep -qi "kit" "$1"' _ "$T/paso9"
+chequear "Paso 9: Claude Desktop: Gateway, URL sin /v1, Clave de API estática, bearer, descubrimiento" bash -c '
+  grep -q "Configure Third-Party Inference" "$1" && grep -q "Gateway" "$1" && grep -q "8091/api/v1/gw" "$1" && grep -q "sin .\/v1." "$1" && grep -q "Clave de API estática" "$1" && grep -q "bearer" "$1" && grep -qi "descubrimiento" "$1"' _ "$T/paso9"
+chequear "Paso 9: espacio de trabajo: «* Permitir todo», Omitir verificación de dominio de WebFetch, Análisis avanzado de archivos" bash -c '
+  grep -q "Permitir todo" "$1" && grep -q "Omitir verificación de dominio de WebFetch" "$1" && grep -q "Análisis avanzado de archivos" "$1"' _ "$T/paso9"
+chequear "Paso 9: Cowork con carpeta de trabajo (y el síntoma FileNotFoundError sin ella)" bash -c 'grep -q "carpeta de trabajo" "$1" && grep -q "FileNotFoundError" "$1"' _ "$T/paso9"
+chequear "Paso 9: el kit (managed-settings.json): inferenceGatewayBaseUrl del servidor, no http://backend:8000" bash -c 'grep -q "managed-settings.json" "$1" && grep -q "inferenceGatewayBaseUrl" "$1" && grep -q "http://backend:8000" "$1"' _ "$T/paso9"
+chequear "Paso 9: prueba de aceptación: los tres modelos, un DNI de prueba, Cowork con un PDF y un PPT, un SVG y la auditoría" bash -c '
+  grep -q "DNI" "$1" && grep -q "PDF" "$1" && grep -q "PPT" "$1" && grep -q "SVG" "$1" && grep -qi "auditor" "$1" && grep -qi "solo metadatos" "$1"' _ "$T/paso9"
+chequear "Paso 9: notas: esfuerzo de razonamiento (gpt-5.1-chat solo medium), imágenes sin filtro (MASKING_IMAGES) y los modelos no generan imágenes" bash -c '
+  grep -q "reasoning_effort" "$1" && grep -q "solo acepta .medium." "$1" && grep -q "MASKING_IMAGES=pass" "$1" && grep -qi "no generan imágenes" "$1"' _ "$T/paso9"
+chequear "Paso 9: no cierra en silencio lo que no está verificado (MASKING_IMAGES y la URL del kit quedan marcados)" bash -c 'grep -q "no figura en la verificación" "$1" && grep -q "🔵" "$1"' _ "$T/paso9"
+chequear "Paso 9: la leyenda de estado es honesta (🟡) y no se da nada por 🟢 sin prueba en vivo" bash -c 'grep -q "🟡" "$1" && ! grep -q "🟢" "$1"' _ "$T/paso9"
+chequear "Paso 9: la credencial del catálogo reemplaza al .env en el Paso 6 (el .env queda para lo heredado) y el Paso 6 ya no dice que solo cumplimiento ve los destinos" bash -c '
+  grep -q "es ahora \*\*la del catálogo\*\*" "$1" && grep -qi "quedan para lo heredado" "$1" && ! grep -q "solo los ve ese" "$1" && ! grep -q "la usa el motor desde .\.env" "$1"' _ "$T/paso6"
+chequear "Paso 7 c): remite al Paso 9 (necesita modelos publicados antes) y d) aclara que ahí no queda nada servido" bash -c 'grep -q "Paso 9" "$1"' _ "$T/paso7"
 
 echo "— honestidad, secretos y marca"
 chequear "dice qué NO se probó con contenedores reales y que la prueba local T102 es previa" bash -c 'grep -qiE "no se prob" "$1" && grep -qi "contenedores reales" "$1" && grep -q "T102" "$1"' _ "$SEC"
