@@ -71,8 +71,8 @@ services:
     # cambia el motor por su cuenta. Un motor sobre otra versión puede traer migraciones propias; se
     # sube a propósito, con copia previa (README, "Subir la versión del motor"). El valor sale de la
     # línea `PINNED elea-guardian-engine=…` que imprime `deploy/release/publish-elea.sh` (repo elea).
-    # Este digest = la etiqueta 2026-10-07 de la imagen del motor (misma LiteLLM 1.92.0 / proxy-extras 0.4.74 que la 2026-09-17: sin migraciones propias del motor).
-    image: ${ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine@sha256:ded7b34d6efd414111e5be756b1bb5b8498205c64692e4ba0eab2c0950fa84e4}
+    # Este digest = la etiqueta 2026-10-08 de la imagen del motor (2026-10-07 + ROUTER_EMBEDDINGS_DEPLOYMENT) (misma LiteLLM 1.92.0 / proxy-extras 0.4.74 que la 2026-09-17: sin migraciones propias del motor).
+    image: ${ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine@sha256:520a8d72060caaf32cd698b21995b0a4ef97ca649577d3fbbd21615939d1abd7}
     container_name: elea-engine
     environment:
       # Base PROPIA del motor (jamás la del backend): ver `db-engine-init`. Con la base compartida el
@@ -89,6 +89,10 @@ services:
       - AZURE_API_KEY=${AZURE_OPENAI_API_KEY}
       - AZURE_API_BASE=${AZURE_OPENAI_ENDPOINT}
       - AZURE_API_VERSION=${AZURE_API_VERSION}
+      # Nombre del DESPLIEGUE de embeddings en el recurso Azure (lo elige quien creó el recurso; en Elea es
+      # `text-embedding-3-large-azure-openai`). Lo usa el ruteo semántico. Vacío o sin definir = el de siempre.
+      # Una imagen del motor anterior a este cambio la ignora. Ver README, «Despliegue de embeddings del ruteo».
+      - ROUTER_EMBEDDINGS_DEPLOYMENT=${ROUTER_EMBEDDINGS_DEPLOYMENT:-text-embedding-3-large}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
