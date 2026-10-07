@@ -71,8 +71,8 @@ services:
     # cambia el motor por su cuenta. Un motor sobre otra versión puede traer migraciones propias; se
     # sube a propósito, con copia previa (README, "Subir la versión del motor"). El valor sale de la
     # línea `PINNED elea-guardian-engine=…` que imprime `deploy/release/publish-elea.sh` (repo elea).
-    # Este digest = la etiqueta 2026-09-17 de la imagen del motor.
-    image: ${ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine@sha256:1928af9d1ef6bc6325150ea8cf0a8542020d4b461da621e4079f3d8a6189dafe}
+    # Este digest = la etiqueta 2026-10-07 de la imagen del motor (misma LiteLLM 1.92.0 / proxy-extras 0.4.74 que la 2026-09-17: sin migraciones propias del motor).
+    image: ${ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine@sha256:ded7b34d6efd414111e5be756b1bb5b8498205c64692e4ba0eab2c0950fa84e4}
     container_name: elea-engine
     environment:
       # Base PROPIA del motor (jamás la del backend): ver `db-engine-init`. Con la base compartida el

@@ -34,7 +34,7 @@ chequear "no se llamó a docker" [ ! -s "$FAKE_LOG" ]
 chequear "usa pg_dump -T (no -t)" grep -q 'pg_dump .* -T ' <<<"$out"
 chequear "imprime la compuerta de integridad" grep -q 'COMPUERTA DE INTEGRIDAD' <<<"$out"
 chequear "imprime la base nueva elea_engine" grep -q 'Base nueva motor  : elea_engine' <<<"$out"
-chequear "imprime el digest fijado" grep -q 'elea-guardian-engine@sha256:1928af9d' <<<"$out"
+chequear "imprime el digest fijado" grep -q 'elea-guardian-engine@sha256:ded7b34d' <<<"$out"
 chequear "no se tocó el .env" grep -q '^ENGINE_DB=elea_engine$' "$T/.env"
 chequear "no se mostró la llave" bash -c '! grep -q sk-secreta-123 <<<"$0"' "$out"
 

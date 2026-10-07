@@ -1030,8 +1030,9 @@ igual se hace con copia previa:
    o, solo para una prueba, en `.env` como `ENGINE_IMAGE=…`.
 3. `./install.sh`, y verificar con `./migrar-base-motor.sh --verificar`.
 
-El digest que trae este repo es el de la etiqueta `2026-09-17` (`sha256:1928af9d…6189dafe`); la `2026-09-14`
-tiene el mismo motor por dentro (capas idénticas), así que pasar de una a otra no trae migraciones.
+El digest que trae este repo es el de la etiqueta `2026-10-07` (`sha256:ded7b34d…a84e4`), con los arreglos de la base de la 057
+(detección de llaves, enmascarado y caché). Tiene la misma LiteLLM que las `2026-09-17` (`sha256:1928af9d…6189dafe`) y `2026-09-14`
+(1.92.0 / proxy-extras 0.4.74, verificado el 7-oct), así que pasar de una a otra no trae migraciones del motor.
 
 ## Extensión de redirección de modelos (opcional, apagada por defecto)
 
