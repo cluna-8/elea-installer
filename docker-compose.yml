@@ -20,6 +20,28 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Crea la base PROPIA del motor (ENGINE_DB, default elea_engine). Servicio de un solo disparo e
+  # idempotente: si la base ya existe no hace nada. Sirve tanto en una instalación nueva como al
+  # actualizar una con volumen (donde `docker-entrypoint-initdb.d` no corre) y no depende de ningún
+  # bind-mount. Motivo: el migrador del motor aplica un diff base↔schema que BORRA las tablas ajenas
+  # al motor; con base propia ese diff solo puede tocar tablas del motor.
+  db-engine-init:
+    image: postgres:16-alpine
+    container_name: elea-db-engine-init
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env}
+      PGUSER: ${POSTGRES_USER:-elea_admin}
+      ENGINE_DB: ${ENGINE_DB:-elea_engine}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        printf '%s\n' "SELECT format('CREATE DATABASE %I', :'motor') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'motor') \gexec" \
+          | psql -h db -d postgres -v ON_ERROR_STOP=1 -v motor="$$ENGINE_DB"
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [elea-net]
+
   redis:
     image: redis:7-alpine
     container_name: elea-redis
@@ -45,10 +67,24 @@ services:
     restart: unless-stopped
 
   engine:
-    image: ghcr.io/cluna-8/elea-guardian-engine:latest
+    # FIJADA POR DIGEST (decisión D3, oct-2026): un `./install.sh` o un `docker compose pull` nunca
+    # cambia el motor por su cuenta. Un motor sobre otra versión puede traer migraciones propias; se
+    # sube a propósito, con copia previa (README, "Subir la versión del motor"). El valor sale de la
+    # línea `PINNED elea-guardian-engine=…` que imprime `deploy/release/publish-elea.sh` (repo elea).
+    # Este digest = la etiqueta 2026-10-07 de la imagen del motor (misma LiteLLM 1.92.0 / proxy-extras 0.4.74 que la 2026-09-17: sin migraciones propias del motor).
+    image: ${ENGINE_IMAGE:-ghcr.io/cluna-8/elea-guardian-engine@sha256:ded7b34d6efd414111e5be756b1bb5b8498205c64692e4ba0eab2c0950fa84e4}
     container_name: elea-engine
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-elea_admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-elea_gateway}
+      # Base PROPIA del motor (jamás la del backend): ver `db-engine-init`. Con la base compartida el
+      # migrador del motor borraba las tablas del Guardian (users, audit_logs, alembic_version…).
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-elea_admin}:${POSTGRES_PASSWORD}@db:5432/${ENGINE_DB:-elea_engine}
+      # Con base separada la identidad de las llaves y la auditoría viven en la base del backend:
+      # el motor las pide por HTTP interno (protegido con ENGINE_MASTER_KEY). Sin estas dos líneas
+      # TODAS las llaves darían 401 y el tráfico dejaría de auditarse. Vacías (`ENGINE_IDENTITY_URL=`
+      # en .env) = camino SQL de la base compartida: solo para la vuelta atrás de
+      # `./migrar-base-motor.sh --vuelta-atras`.
+      - SENTINEL_IDENTITY_URL=${ENGINE_IDENTITY_URL-http://backend:8000/api/v1/internal/identity}
+      - SENTINEL_AUDIT_URL=${ENGINE_AUDIT_URL-http://backend:8000/api/v1/internal/audit}
       - LITELLM_MASTER_KEY=${ENGINE_MASTER_KEY:?Falta ENGINE_MASTER_KEY en .env}
       - AZURE_API_KEY=${AZURE_OPENAI_API_KEY}
       - AZURE_API_BASE=${AZURE_OPENAI_ENDPOINT}
@@ -72,6 +108,7 @@ services:
       - SENTINEL_PII_VAULT_TTL_SECONDS=${SENTINEL_PII_VAULT_TTL_SECONDS:-7776000}
     depends_on:
       db: { condition: service_healthy }
+      db-engine-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       nlp-analyzer: { condition: service_healthy }
     # tabular-net / presentations-net (spec 050): los motores le hablan directo a este motor
@@ -88,8 +125,9 @@ services:
     image: ghcr.io/cluna-8/elea-guardian-backend:latest
     container_name: elea-backend
     command: ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"]
-    ports:
-      - "8091:8000"
+    # SIN `ports:` (capa 3 de la defensa de /api/v1/internal/*): lo único publicado hacia la LAN es el
+    # proxy `api-proxy` (8091), que niega ese plano. El motor y el Hub le hablan a `backend:8000` por
+    # la red interna. Publicar el 8000 acá reabriría la puerta que el proxy cierra.
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-elea_gateway}
       - POSTGRES_USER=${POSTGRES_USER:-elea_admin}
@@ -111,10 +149,24 @@ services:
       - NLP_ANALYZER_URL=http://nlp-analyzer:3000
       - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
       - SENTINEL_AUDIT_FAIL=open
+      # Capa 2 de la defensa de /api/v1/internal/*: el plano interno solo se atiende si el pedido llega
+      # desde la red de compose (`auto` = las subredes del contenedor, sin su puerta de enlace). Un
+      # backend que aún no trae esta variable la ignora; con ella activa el proxy sigue siendo la capa 3.
+      - INTERNAL_ALLOWED_CIDRS=auto
       # Mismo flag que `engine` (ver comentario ahí) — el backend escribe la bóveda en
       # /gw/inspect (masking de documentos RAG); el motor la lee al desenmascarar.
       - SENTINEL_PII_VAULT_ENABLED=${SENTINEL_PII_VAULT_ENABLED:-true}
       - SENTINEL_PII_VAULT_TTL_SECONDS=${SENTINEL_PII_VAULT_TTL_SECONDS:-7776000}
+      # Título de la consola del Guardian (backend/src/main.py:78 lo lee con default
+      # 'Sentinel Secure AI Gateway'). Marca de runtime, no horneada (mismo criterio
+      # que HUB_BRAND_* del Hub en :262-268): esta instalación fija «Eleia GuardIAn».
+      # Literal acá (no en .env) — es la marca de la instalación, no un dato del operador.
+      - BRAND_NAME=Eleia GuardIAn
+      # URL pública de la pasarela que llevan los kits de cliente (Modelos → Kits): la
+      # ruta del panel la deduce de los encabezados, pero si el host es interno de compose
+      # (backend:8000) pone un marcador. Con esta variable el kit sale listo para repartir.
+      # Sin valor (el default) la ruta la deduce; el panel avisa si no puede.
+      - REDIRECT_GATEWAY_URL=${REDIRECT_GATEWAY_URL:-}
     depends_on:
       db: { condition: service_healthy }
       engine: { condition: service_healthy }
@@ -125,6 +177,29 @@ services:
       timeout: 5s
       retries: 15
       start_period: 15s
+    restart: unless-stopped
+
+  # Puerta de la API para las PC de la LAN: publica 8091 (el puerto de siempre: el panel, Claude
+  # Desktop y Claude Code apuntan a él) y responde 404 a /api/v1/internal/*. Es la ÚNICA ruta del
+  # backend hacia afuera. Imagen fijada por digest, la misma que el panel de producción.
+  # Config: ./proxy/Caddyfile (solo lectura).
+  api-proxy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    container_name: elea-api-proxy
+    ports:
+      - "8091:8091"
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      backend: { condition: service_healthy }
+    networks: [elea-net]
+    healthcheck:
+      # Por el camino completo (proxy → backend): si el backend cae, el proxy se ve no sano.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     restart: unless-stopped
 
   frontend:

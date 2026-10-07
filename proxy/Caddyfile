@@ -1,0 +1,28 @@
+# Proxy delante del backend (servicio `api-proxy`): la puerta de la API para las PC de la LAN.
+# Publica el mismo puerto de siempre (8091) y deja pasar todo al backend, salvo el plano interno.
+#
+# Capa 3 de la defensa de `/api/v1/internal/*` (identidad y auditoría del motor, que se piden con el
+# secreto compartido ENGINE_MASTER_KEY). Ese plano se habla SOLO por la red interna de compose, entre
+# el motor y el backend (`http://backend:8000`, sin pasar por acá). Desde afuera siempre 404, aunque
+# el pedido traiga el secreto. Mismo criterio que el ingress de producción (`Caddyfile.ingress` del
+# repo de desarrollo: `handle /api/v1/internal/* { respond 404 }`), con dos diferencias a propósito:
+#   · se niega cualquier segmento `internal` del camino, no solo el prefijo exacto: sin distinguir
+#     mayúsculas, tolerando barras repetidas, `..` y letras codificadas (se compara contra el camino
+#     ya decodificado, el mismo que ve el backend);
+#   · el backend no publica ningún puerto: no hay otra puerta.
+# `INTERNAL_ALLOWED_CIDRS=auto` en el backend es la capa 2 (origen de red); este archivo, la 3.
+# HTTP plano de LAN, igual que hoy: sin TLS automático ni API de administración.
+{
+	admin off
+	auto_https off
+}
+
+:8091 {
+	@interno path_regexp "(?i)(^|/)internal(/|$)"
+	respond @interno 404
+
+	# flush_interval -1: las respuestas del gateway llegan por trozos (streaming); no se retienen.
+	reverse_proxy backend:8000 {
+		flush_interval -1
+	}
+}

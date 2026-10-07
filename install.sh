@@ -13,6 +13,7 @@ die() { echo -e "\033[1;31m✗ $1\033[0m" >&2; exit 1; }
 # Escribe KEY=VALUE en .env reemplazando la línea si ya existe (el .env.example trae las
 # claves vacías; antes se agregaban al final y quedaban duplicadas).
 set_env() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi; }
+del_env() { sed -i "/^$1=/d" .env; unset "$1"; }
 # AnythingLLM NO publica su puerto al host (aislamiento, 08-sep): se le habla desde adentro
 # de su propio contenedor (trae curl). Antes el instalador usaba localhost:3001 y fallaba.
 allm_curl() { docker exec elea-anythingllm curl -s "$@"; }
@@ -37,6 +38,10 @@ content = content.replace('ADMIN_PASSWORD=', f'ADMIN_PASSWORD={secrets.token_url
 with open('.env', 'w') as f:
     f.write(content)
 PY
+  # Marca de instalación NUEVA: la segunda corrida (la que levanta todo) crea el usuario de cumplimiento
+  # y la borra. Una instalación que ya existía no la tiene: ahí ese usuario es una decisión explícita
+  # (./crear-super-admin.sh), no algo que aparece solo al actualizar.
+  set_env ELEA_SUPER_ADMIN_PENDIENTE 1
   echo
   echo "  Se creó .env con secretos generados. FALTA que completes las credenciales"
   echo "  reales del modelo (Azure OpenAI / Gemini) — editá .env y volvé a correr:"
@@ -48,18 +53,48 @@ PY
 fi
 
 set -a; source .env; set +a
+# Extensión de redirección de modelos (opt-in, ELEA_REDIRECT=1; README, «Extensión de redirección de modelos»).
+# Tag MÍNIMO (AAAA-MM-DD) del backend publicado que trae el chequeo de origen del canal interno: con una versión
+# anterior ./activar-redirect.sh no activa la extensión. Se fija ACÁ, después de leer .env, para que un valor en
+# .env no pueda bajarlo. 2026-10-07 = la fecha del primer juego de imágenes (base y -ext) construido desde la rama
+# final de la 057 (prueba T102); una versión publicada anterior no trae ese chequeo. «PENDIENTE-PRIMER-RELEASE»
+# (el valor anterior) hacía que ELEA_REDIRECT=1 no se pudiera activar nunca.
+ELEA_EXT_MIN_VERSION="2026-10-07"
+export ELEA_EXT_MIN_VERSION
 [ -n "${AZURE_OPENAI_API_KEY:-}" ] || die "Falta AZURE_OPENAI_API_KEY en .env — completalo y volvé a correr."
 
 # ── 2. Registro de imágenes ─────────────────────────────────────────────────────────
 # Las imágenes son públicas (decisión del 14-sep-2026): no hace falta login. Solo si la
 # descarga falla (imagen todavía privada, o red que exige credenciales) se pide un token.
-if ! docker pull -q ghcr.io/cluna-8/elea-guardian-engine:latest >/dev/null 2>&1; then
+# El motor va FIJADO POR DIGEST en docker-compose.yml (decisión D3, oct-2026): este script nunca lo
+# cambia por su cuenta; subirlo es una tarea deliberada (README, "Subir la versión del motor").
+if [ -n "${ENGINE_IMAGE:-}" ] && [ "${ENGINE_IMAGE#*@sha256:}" = "${ENGINE_IMAGE}" ]; then
+  echo "  ! ENGINE_IMAGE (.env) no es un digest (…@sha256:…): el motor puede cambiar de versión sin aviso." >&2
+fi
+if ! docker compose pull --quiet engine >/dev/null 2>&1; then
   log "No se pudo descargar la imagen del Guardian sin credenciales — login al registro"
   echo "Pedí un token de lectura (read:packages) a quien te dio este instalador."
   read -rp "Usuario de GitHub: " GHCR_USER
   read -rsp "Token: " GHCR_TOKEN; echo
   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || die "No se pudo autenticar al registro."
 fi
+
+# ── 2b. Base propia del motor ───────────────────────────────────────────────────────
+# El motor tiene su base (ENGINE_DB) separada de la del Guardian: con la base compartida su migrador
+# borra las tablas del Guardian. Una instalación vieja la tiene compartida: se migra ANTES de
+# levantar nada con el compose nuevo (que apuntaría el motor a una base vacía). Una instalación
+# nueva no tiene nada que migrar. Detalle y vuelta atrás: README.
+rc=0; ./migrar-base-motor.sh --detectar || rc=$?
+case "$rc" in
+  0) log "Esta instalación tiene la base del motor compartida con el Guardian: se separa (hay un corte de ~1-3 min)"
+     ./migrar-base-motor.sh || die "La migración de la base del motor no terminó. Estado y vuelta atrás: README, «Separar la base del motor»." ;;
+  3) # Nada que separar. Antes de actualizar una instalación con datos, copia de las dos bases.
+     if [ "${ELEA_SIN_RESPALDO:-0}" != 1 ]; then
+       log "Copia de seguridad de las bases (antes de tocar nada)"
+       ./respaldo.sh || die "Sin copia previa no se actualiza (ELEA_SIN_RESPALDO=1 para omitirla bajo tu responsabilidad)."
+     fi ;;
+  *) die "Estado de las bases ambiguo (código ${rc}): no se actualiza nada. Ver README, «Estado ambiguo»." ;;
+esac
 
 # ── 3. Levantar todo menos el cliente (necesita keys que generamos después) ─────────
 log "Descargando y levantando el motor y AnythingLLM (sin depender de backend todavía)"
@@ -74,9 +109,19 @@ for i in $(seq 1 60); do
   [ "$i" -eq 60 ] && die "El motor no terminó de arrancar después de 5 minutos. Revisá: ./elea-logs.sh engine"
 done
 
-log "Levantando el Guardian (backend + panel)"
-docker compose pull backend frontend 2>&1 | grep -v "^ " || true
-docker compose up -d backend frontend
+# El puerto 8091 lo publica el proxy (api-proxy), no el backend: el proxy niega /api/v1/internal/*.
+# Si OTRO proceso lo tiene ocupado el proxy no arranca: mejor decirlo antes que esperar 3 minutos.
+# (Si ya corren el backend o el proxy de este instalador, el 8091 es nuestro: compose lo reasigna solo.)
+if command -v ss >/dev/null && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '[:.]8091$' \
+   && [ -z "$(docker ps -q -f name=^/elea-backend$ -f name=^/elea-api-proxy$)" ]; then
+  die "El puerto 8091 ya lo usa otro proceso (no es este instalador): liberalo y volvé a correr. Ver: ss -ltnp | grep 8091"
+fi
+
+log "Levantando el Guardian (backend + proxy de la API + panel)"
+docker compose pull backend api-proxy frontend 2>&1 | grep -v "^ " || true
+# Juntos y en una sola orden: al actualizar una instalación vieja, el backend viejo todavía publica
+# el 8091; compose lo recrea sin puerto ANTES de arrancar el proxy (que depende de él) y lo toma.
+docker compose up -d backend api-proxy frontend
 
 log "Esperando a que el Guardian esté listo (puede tardar el primer arranque)"
 for i in $(seq 1 60); do
@@ -92,6 +137,24 @@ ADMIN_LOGIN=$(curl -s -X POST http://localhost:8091/api/v1/users/login \
   -d "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD}\"}")
 ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("access_token",""))')
 [ -n "$ADMIN_TOKEN" ] || die "No se pudo crear/autenticar el admin. Respuesta: $ADMIN_LOGIN"
+
+# ── 4b. Usuario de cumplimiento (super_admin) ───────────────────────────────────────
+# Solo en una instalación nueva (marca puesta al generar el .env). Es otro usuario que el admin de la
+# empresa: crea Auditores y relaja el enmascarado de la 057. Su contraseña la genera el backend, se
+# muestra UNA vez (./crear-super-admin.sh) y no pasa por este script ni por ningún archivo. Si falla no
+# se aborta la instalación: la marca queda y la próxima corrida (o el comando a mano) lo reintenta.
+SUPER_ADMIN_NOTA=""
+if [ "${ELEA_SUPER_ADMIN_PENDIENTE:-}" = 1 ]; then
+  log "Creando el usuario de cumplimiento (super_admin)"
+  if ./crear-super-admin.sh; then
+    del_env ELEA_SUPER_ADMIN_PENDIENTE
+  else
+    echo "  ! No se pudo crear el usuario de cumplimiento; la instalación sigue. Reintentá más tarde: ./crear-super-admin.sh" >&2
+    SUPER_ADMIN_NOTA="Falta crear el usuario de cumplimiento: ./crear-super-admin.sh"
+  fi
+else
+  SUPER_ADMIN_NOTA="Usuario de cumplimiento (super_admin): ./crear-super-admin.sh lo crea una vez (si ya hay uno, no toca nada)"
+fi
 
 # ── 5. API key de AnythingLLM (solo si no la generamos antes) ──────────────────────
 if [ -z "${ANYTHINGLLM_API_KEY:-}" ]; then
@@ -199,6 +262,11 @@ docker compose pull tabular presenton client 2>&1 | grep -v "^ " || true
 # (exact-analysis-engine), que ya no está en este compose.
 docker compose up -d --remove-orphans tabular presenton client
 
+# ── 8. Extensión de redirección de modelos (opt-in) ─────────────────────────────────
+# Sin ELEA_REDIRECT no hace nada (ni escribe ni recrea nada). Con ELEA_REDIRECT=1 comprueba las condiciones, toma
+# el respaldo y cambia backend, panel y motor a las imágenes -ext. Si se la saca de .env, la apaga (nivel 1).
+./activar-redirect.sh || die "La extensión de redirección no quedó activa (el resto de la instalación está listo). Ver el mensaje de arriba y README, «Extensión de redirección de modelos»."
+
 echo
 echo "================================================================"
 echo "  Listo. Todo corriendo."
@@ -211,6 +279,7 @@ echo
 echo "  Admin:  usuario 'admin', contraseña: ${ADMIN_PASSWORD}"
 echo "  (guardada en .env — no se vuelve a mostrar)"
 echo
+[ -z "${SUPER_ADMIN_NOTA}" ] || { echo "  ${SUPER_ADMIN_NOTA}"; echo; }
 echo "  Para cada persona que va a probar: crear su usuario en el Guardian"
 echo "  (POST http://localhost:8091/api/v1/users con el token de admin, o pedime"
 echo "  el script create-tester.sh) — todas entran a http://localhost:8095 con su"

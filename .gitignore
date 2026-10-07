@@ -1,1 +1,4 @@
 .env
+respaldos/
+.migracion-motor/
+.ultimo-respaldo
