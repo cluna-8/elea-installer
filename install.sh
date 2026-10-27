@@ -150,6 +150,28 @@ docker compose pull backend api-proxy frontend 2>&1 | grep -v "^ " || true
 # Juntos y en una sola orden: al actualizar una instalación vieja, el backend viejo todavía publica
 # el 8091; compose lo recrea sin puerto ANTES de arrancar el proxy (que depende de él) y lo toma.
 docker compose up -d backend api-proxy frontend
+# >>> proxy-config
+# El Caddyfile y arranque.sh van montados como ARCHIVOS de solo lectura (docker-compose.yml, api-proxy): si un
+# `git pull` o una edición los reemplaza (inodo nuevo), el contenedor sigue viendo la copia vieja, y compose no lo
+# recrea porque su definición no cambió. Caddy corre con `admin off` (proxy/Caddyfile), así que `caddy reload` no existe:
+# se compara lo que ve el contenedor con lo que hay en disco y, solo si difiere, se recrea ese servicio (unos segundos
+# de corte del 8091/8443; el backend y el panel no se tocan). Si ya coincide, no hay corte.
+proxy_config_vieja() {
+  local dentro fuera
+  if ! dentro=$(docker exec elea-api-proxy sha256sum /etc/caddy/Caddyfile /usr/local/bin/arranque.sh 2>/dev/null | awk '{print $1}'); then
+    # No se pudo mirar adentro: si el contenedor existe (parado), conserva el montaje viejo → se recrea; si no existe
+    # (primera instalación) el `up` de arriba ya lo creó con el archivo actual.
+    [ -n "$(docker ps -aq -f name=^/elea-api-proxy$ 2>/dev/null)" ]
+    return
+  fi
+  fuera=$(sha256sum proxy/Caddyfile proxy/arranque.sh | awk '{print $1}')
+  [ "$dentro" != "$fuera" ]
+}
+if proxy_config_vieja; then
+  log "El proxy tiene un Caddyfile/arranque.sh anterior: se recrea solo ese servicio para que tome el nuevo"
+  docker compose up -d --force-recreate --no-deps api-proxy
+fi
+# <<< proxy-config
 
 log "Esperando a que el Guardian esté listo (puede tardar el primer arranque)"
 for i in $(seq 1 60); do
@@ -198,13 +220,19 @@ else
 fi
 
 # ── 5. API key de AnythingLLM (solo si no la generamos antes) ──────────────────────
+# AnythingLLM se acaba de levantar (o recrear) arriba, aunque se lo hubiera apagado a mano: `up -d` lo arranca. El
+# contenedor existe antes de que la aplicación escuche, y en una reinstalación (la API key ya está en .env) el curl de
+# abajo le pegaba en ese hueco y salía con 7 (conexión rechazada), matando la instalación. Por eso se espera SIEMPRE.
+# >>> anythingllm-espera
+log "Esperando a AnythingLLM"
+for i in $(seq 1 "${ELEA_ESPERA_INTENTOS:-30}"); do
+  allm_curl -f -o /dev/null http://localhost:3001/api/ping && break
+  sleep "${ELEA_ESPERA_PAUSA:-2}"
+  [ "$i" -eq "${ELEA_ESPERA_INTENTOS:-30}" ] && die "AnythingLLM no respondió después de 1 minuto. Revisá: ./elea-logs.sh anythingllm"
+done
+# <<< anythingllm-espera
 if [ -z "${ANYTHINGLLM_API_KEY:-}" ]; then
-  log "Esperando a AnythingLLM y generando su API key"
-  for i in $(seq 1 30); do
-    allm_curl -f -o /dev/null http://localhost:3001/api/ping && break
-    sleep 2
-    [ "$i" -eq 30 ] && die "AnythingLLM no respondió después de 1 minuto. Revisá: ./elea-logs.sh anythingllm"
-  done
+  log "Generando la API key de AnythingLLM"
   ANYTHINGLLM_API_KEY=$(docker exec elea-anythingllm node -e "
     const {PrismaClient} = require('/app/server/node_modules/@prisma/client');
     const p = new PrismaClient();
@@ -289,12 +317,15 @@ fi
 
 # Siempre (idempotente): antes vivía dentro del bloque de arriba y, si la primera corrida se
 # cortaba justo después de crear las llaves, la segunda ya no conectaba AnythingLLM al motor.
+# >>> anythingllm-conexion
 log "Conectando AnythingLLM al motor del Guardian"
 [ -n "${ANYTHINGLLM_PROVIDER_VIRTUAL_KEY:-}" ] || die "Falta ANYTHINGLLM_PROVIDER_VIRTUAL_KEY en .env (instalación a medias: borrá TABULAR_ENGINE_VIRTUAL_KEY del .env y volvé a correr)."
 ALLM_RESP=$(allm_curl -X POST http://localhost:3001/api/v1/system/update-env \
   -H "Authorization: Bearer ${ANYTHINGLLM_API_KEY}" -H 'Content-Type: application/json' \
-  -d "{\"LLMProvider\":\"generic-openai\",\"GenericOpenAiBasePath\":\"http://engine:4000/v1\",\"GenericOpenAiModelPref\":\"${ANYTHINGLLM_MODEL:-azure-gpt-4o-mini}\",\"GenericOpenAiKey\":\"${ANYTHINGLLM_PROVIDER_VIRTUAL_KEY}\"}")
+  -d "{\"LLMProvider\":\"generic-openai\",\"GenericOpenAiBasePath\":\"http://engine:4000/v1\",\"GenericOpenAiModelPref\":\"${ANYTHINGLLM_MODEL:-azure-gpt-4o-mini}\",\"GenericOpenAiKey\":\"${ANYTHINGLLM_PROVIDER_VIRTUAL_KEY}\"}") \
+  || die "No se pudo hablar con AnythingLLM (curl salió con ${?}). Revisá: ./elea-logs.sh anythingllm"
 echo "$ALLM_RESP" | grep -q '"error":false' || die "AnythingLLM no aceptó la configuración del motor: ${ALLM_RESP}"
+# <<< anythingllm-conexion
 
 # ── 7. Levantar los motores y el Hub (ya con las keys en .env) ─────────────────────
 log "Levantando el motor de planillas, el de presentaciones y Eleia Hub"

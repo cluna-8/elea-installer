@@ -70,6 +70,25 @@ while [ $# -gt 0 ]; do case "$1" in -i) shift ;; -e) shift 2 ;; *) break ;; esac
 cont="$1"; shift
 cmd="$1"; shift
 case "$cmd" in
+  # curl DENTRO de AnythingLLM (install.sh: allm_curl). FAKE_ALLM_ARRANCANDO=N: las primeras N llamadas fallan con 7
+  # (conexión rechazada: el contenedor está pero la aplicación todavía no escucha); FAKE_ALLM_APAGADO=1: siempre 7.
+  curl)
+    echo "curl $*" >> "${FAKE_LOG}.allm"
+    [ "${FAKE_ALLM_APAGADO:-}" != 1 ] || exit 7
+    if [ -n "${FAKE_ALLM_ARRANCANDO:-}" ]; then
+      n=$(cat "${FAKE_LOG}.allm-n" 2>/dev/null || echo 0)
+      echo $((n + 1)) > "${FAKE_LOG}.allm-n"
+      [ "$n" -ge "$FAKE_ALLM_ARRANCANDO" ] || exit 7
+    fi
+    resp_ok='{"error":false}'
+    case "$*" in *update-env*) echo "${FAKE_ALLM_RESP:-$resp_ok}" ;; esac
+    exit 0 ;;
+  # sha256sum DENTRO del proxy (install.sh: proxy_config_vieja): lo que «ve» el contenedor montado es el directorio
+  # FAKE_PROXY_MONTADO (la copia que quedó atada al inodo viejo); FAKE_PROXY_SIN_CONTENEDOR=1: el contenedor no está.
+  sha256sum)
+    [ "${FAKE_PROXY_SIN_CONTENEDOR:-}" != 1 ] || { echo "Error response from daemon: No such container: $cont" >&2; exit 1; }
+    for f in "$@"; do (cd "${FAKE_PROXY_MONTADO:?}" && sha256sum "$(basename "$f")" | sed "s| .*| $f|"); done
+    exit 0 ;;
   pg_dump)    echo "PGDMP-falso"; exit 0 ;;
   pg_restore) cat >/dev/null; echo "1; 1259 1 TABLE public users elea_admin"; exit 0 ;;
   sh)         exit "${FAKE_DUMP_RC:-0}" ;;
