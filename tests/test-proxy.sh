@@ -73,6 +73,18 @@ chequear "escucha en 8091" grep -Eq '^:8091 \{' "$CADDYFILE"
 chequear "la regla de internal va ANTES del reverse_proxy (en el fragmento «ruta» que comparten el 8091 y el HTTPS)" bash -c '[ "$(grep -n "respond.*404" "$1" | head -n1 | cut -d: -f1)" -lt "$(grep -n "reverse_proxy" "$1" | head -n1 | cut -d: -f1)" ]' _ "$CADDYFILE"
 chequear "no nombra componentes internos (white-label)" bash -c '! grep -Eiq "litellm|presenton|sentinel|guardian" "$1"' _ "$CADDYFILE"
 
+echo "— proxy/Caddyfile: no delata la tecnología (cabeceras Server / X-Powered-By fuera, en el 8091 y en el 8443)"
+# Se mira el fragmento «ruta» (el que importan los dos sitios) y que cada sitio lo importe.
+ruta_txt() { sed -n '/^(ruta) {/,/^}/p' "$CADDYFILE"; }
+sitio_txt() { sed -n "/^$1 {/,/^}/p" "$CADDYFILE"; }
+export CADDYFILE; export -f ruta_txt sitio_txt
+chequear "el fragmento «ruta» quita Server (el del backend y el propio de Caddy)" bash -c 'ruta_txt | grep -Eq "^\s*header -Server\s*$"' _
+chequear "el fragmento «ruta» quita X-Powered-By" bash -c 'ruta_txt | grep -Eq "^\s*header -X-Powered-By\s*$"' _
+chequear "…y también lo que el backend manda por reverse_proxy (header_down), para que no gane el upstream" bash -c 'ruta_txt | grep -Eq "header_down -Server" && ruta_txt | grep -Eq "header_down -X-Powered-By"' _
+chequear "el sitio del 8091 importa «ruta»" bash -c 'sitio_txt ":8091" | grep -Eq "^\s*import ruta\s*$"' _
+chequear "el sitio HTTPS (8443) importa «ruta»" bash -c 'sitio_txt "{\$PROXY_TLS_NAMES:localhost}" | grep -Eq "^\s*import ruta\s*$"' _
+chequear "ningún sitio vuelve a poner Server ni X-Powered-By" bash -c '! grep -Eq "^\s*header\s+\+?(Server|X-Powered-By)\b" "$1"' _ "$CADDYFILE"
+
 echo "— proxy/Caddyfile (corriendo Caddy de verdad contra un backend de mentira)"
 CADDY_BIN="${ELEA_CADDY_BIN:-$(command -v caddy || true)}"
 if [ -z "$CADDY_BIN" ] || [ ! -x "$CADDY_BIN" ]; then
@@ -94,11 +106,11 @@ class H(BaseHTTPRequestHandler):
         if n: self.rfile.read(n)
         with open(LOG, "a") as f: f.write(f"{self.command} {self.path}\n")
         if self.path.startswith("/sse"):
-            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("X-Powered-By", "Express"); self.end_headers()
             self.wfile.write(b"data: uno\n\n"); self.wfile.flush(); time.sleep(1.5)
             self.wfile.write(b"data: dos\n\n"); self.wfile.flush(); return
         body = b"BACKEND"
-        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.send_header("X-Powered-By", "Express"); self.end_headers(); self.wfile.write(body)
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _go
     def log_message(self, *a): pass
 ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
@@ -129,6 +141,13 @@ PY
   chequear "DELETE /api/v1/keys/abc (instalador)" pasa /api/v1/keys/abc -X DELETE
   chequear "GET /api/v1/internals-x pasa (no es el segmento 'internal')" pasa /api/v1/internals-x
   chequear "GET /api/v1/gw/internal-x pasa (no es el segmento 'internal')" pasa /api/v1/gw/internal-x
+
+  echo "    no delata la tecnología (el backend de mentira manda Server y X-Powered-By, como uvicorn/Express)"
+  cab() { curl -s --path-as-is -D - -o /dev/null --max-time 10 "$@"; }; export -f cab
+  chequear "la respuesta del backend llega sin Server" bash -c '! cab "$1" | grep -qi "^server:"' _ "$U/health"
+  chequear "…ni X-Powered-By" bash -c '! cab "$1" | grep -qi "^x-powered-by:"' _ "$U/health"
+  chequear "el 404 de /internal tampoco lleva Server" bash -c '! cab "$1" | grep -qi "^server:"' _ "$U/api/v1/internal/identity"
+  chequear "el streaming (SSE) tampoco lleva Server" bash -c '! cab "$1" | grep -qi "^server:"' _ "$U/sse"
 
   echo "    responde 404 a /api/v1/internal/* y el backend NO ve esos pedidos"
   : > "$T/back.log"

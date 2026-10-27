@@ -4,6 +4,12 @@ Paquete de instalación: Guardian (gobernanza IA) + cliente RAG + AnythingLLM, t
 un solo `docker compose`. Las imágenes ya están construidas — este repo no tiene el
 código fuente del Guardian, solo la configuración para levantarlo.
 
+## Requisitos
+
+Docker con `docker compose`. Memoria: el analizador de datos personales corre `NLP_WORKERS` procesos y cada uno
+ocupa ≈ 360 MB. Por defecto son 2 (≈ 0,7 GB); en servidores con memoria de sobra se puede subir a 4 (≈ 1,4 GB)
+poniendo `NLP_WORKERS=4` en `.env`. Una imagen del analizador anterior a este cambio ignora la variable.
+
 ## Instalación
 
 ```bash
@@ -73,6 +79,19 @@ subir. Por cada imagen imprime una línea `PINNED <nombre>=<imagen>@sha256:…`:
 que se pega para fijar una versión (el motor, ver más abajo). Después de publicar, probar este instalador desde cero (carpeta nueva, `docker compose
 down -v` si había algo) antes de sincronizarlo a Azure DevOps.
 
+## Probar imágenes construidas en local
+
+Para probar imágenes que no están publicadas (construidas en la máquina), se cargan en el `.env` **antes** de
+correr `./install.sh`: `BACKEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE` y `FRONTEND_EXT_IMAGE` (las variantes `-ext`, solo
+con `ELEA_REDIRECT=1`) y `NLP_IMAGE` (el analizador). Cada una reemplaza la imagen entera por la referencia que se
+ponga; todas están, comentadas, en `.env.example`. Sacarlas del `.env` devuelve las imágenes publicadas.
+
+Si la imagen existe solo en esta máquina, el instalador no la baja del registro: `./install.sh` y
+`./activar-redirect.sh` intentan el `pull`, y si falla pero la imagen está en local (la comprueban con
+`docker image inspect`), siguen con ella —avisan cuál— y no piden usuario ni token del registro. Si falta alguna
+de las imágenes de backend, panel o motor, paran antes de tocar nada y dicen cuál. Con imágenes publicadas el
+comportamiento no cambia. Prueba sin Docker: `bash tests/test-pull-local.sh`.
+
 ## Después de instalar
 
 0. **Guardar la contraseña del usuario de cumplimiento** que mostró `./install.sh` (se muestra una sola vez,
@@ -110,7 +129,8 @@ corto del motor). Después, descarga las imágenes nuevas y recrea solo los cont
 configuración cambió (el backend pasa a no publicar puerto y arranca el proxy `api-proxy` en el `8091`, ver «Proxy de la API») (los espacios, documentos y usuarios sobreviven); las cuentas `svc.*` que ya
 existen se reutilizan (se revoca su llave anterior y se emite una nueva, porque Guardian permite
 una sola llave activa por cuenta); crea `svc.tabular` y `svc.presenton`; reconecta AnythingLLM al
-motor; y borra el contenedor viejo de DB-GPT (`exact-analysis-engine`) que ya no existe en este
+motor (antes espera a que AnythingLLM responda, aunque lo hayas apagado con `docker compose stop`: el instalador lo vuelve a levantar); si el `Caddyfile` o `proxy/arranque.sh` cambiaron desde que se creó el proxy,
+recrea **solo** `api-proxy` (unos segundos de corte del `8091` y el `8443`; si no cambiaron, no lo toca); y borra el contenedor viejo de DB-GPT (`exact-analysis-engine`) que ya no existe en este
 compose. Las variables viejas del `.env` (`MASKING_VIRTUAL_KEY`, `DBGPT_ENGINE_VIRTUAL_KEY`) quedan
 sin uso; se pueden borrar a mano.
 
@@ -1400,6 +1420,10 @@ muestra quién lo tiene; liberarlo y volver a correr.
 
 **El ruteo semántico cae siempre al modelo por defecto** (la decisión de ruteo queda degradada con el motivo `embed_error`; en `./elea-logs.sh backend` se lee «Auto-router: fallo al embeber»): lo más común es que el **despliegue de embeddings** no se llame como cree el motor. En `./elea-logs.sh engine` aparece algo como `DeploymentNotFound` / «The API deployment for this resource does not exist». Arreglo: listar los despliegues del recurso con la llave de `.env` (README, «Despliegue de embeddings del ruteo»), poner el nombre correcto en `ROUTER_EMBEDDINGS_DEPLOYMENT=` (en Elea, `text-embedding-3-large-azure-openai`) y recrear el motor con `docker compose up -d engine`. El resto del producto sigue andando: es una degradación, no una caída.
 
+**`./install.sh` termina con código 7 en «Conectando AnythingLLM al motor»** (versiones anteriores): AnythingLLM recién arrancado todavía no escuchaba y el instalador no lo esperaba en una reinstalación. Ahora espera siempre su `/api/ping` (hasta 1 minuto, y si no responde dice `./elea-logs.sh anythingllm`). `./install.sh` levanta AnythingLLM aunque lo hayas apagado a mano; el instalador no tiene un modo «sin AnythingLLM».
+
+**El proxy no toma un `Caddyfile` nuevo**: va montado como archivo de solo lectura y Caddy corre con `admin off` (no hay `caddy reload`), así que un cambio en `proxy/Caddyfile` o `proxy/arranque.sh` no llega al contenedor hasta recrearlo. `./install.sh` lo detecta (compara el hash que ve el contenedor con el del disco) y recrea solo `api-proxy`; a mano: `docker compose up -d --force-recreate --no-deps api-proxy`.
+
 **El motor (`engine`) tarda en aparecer sano la primera vez**: es esperado con una base
 de datos nueva (migra sus tablas) — el instalador ya espera hasta 5 minutos. Si en algún
 momento el contenedor se reinicia solo una vez durante ese lapso (`docker compose ps`
@@ -1410,6 +1434,8 @@ no hace falta intervenir.
 
 ```bash
 bash tests/test-embeddings-deployment.sh   # despliegue de embeddings del ruteo: compose (base y -ext), .env.example y README (sin Docker)
+bash tests/test-nlp-workers.sh            # analizador: NLP_WORKERS=2 por defecto, NLP_IMAGE y documentación (sin Docker)
+bash tests/test-reinstalacion.sh  # reinstalación: espera a AnythingLLM antes de conectarlo y recrea el proxy si cambió su Caddyfile (Docker simulado)
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
 bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad

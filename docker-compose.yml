@@ -55,8 +55,12 @@ services:
     restart: unless-stopped
 
   nlp-analyzer:
-    image: ghcr.io/cluna-8/elea-guardian-nlp:latest
+    image: ${NLP_IMAGE:-ghcr.io/cluna-8/elea-guardian-nlp:latest}
     container_name: elea-nlp-analyzer
+    environment:
+      # Procesos del analizador (cada uno ≈ 360 MB). 2 por defecto; 4 en servidores con memoria de sobra.
+      # Una imagen del analizador anterior a este cambio la ignora.
+      - NLP_WORKERS=${NLP_WORKERS:-2}
     networks: [elea-net]
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:3000/health\")' || exit 1"]
@@ -99,7 +103,7 @@ services:
       - LITELLM_LOG=INFO
       - NLP_ANALYZER_URL=http://nlp-analyzer:3000
       # Spec 050: los motores de generación (Presenton, plantillas) mandan prompts largos; el
-      # analyzer procesa ~330 chars/s. 15 s los bloqueaba como "NLP no disponible".
+      # analizador procesa ~49 000 caracteres/s (medido). 15 s los bloqueaba como "NLP no disponible".
       - SENTINEL_NLP_TIMEOUT_S=${SENTINEL_NLP_TIMEOUT_S:-60}
       - SENTINEL_ENTITY_REGION=${ENTITY_REGION:-latam_ar}
       - SENTINEL_AUDIT_FAIL=open

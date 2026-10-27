@@ -11,6 +11,15 @@ case "${1:-}" in
       # `config --format json` devuelve el archivo $FAKE_COMPOSE_JSON (lo arma la prueba con tests/render-compose.py).
       config)  case "$*" in
                  *"--format json"*) [ -z "${FAKE_COMPOSE_JSON:-}" ] || cat "$FAKE_COMPOSE_JSON" ;;
+                 # `config --images [servicio]`: como el docker real, IGNORA el servicio y devuelve las imágenes de TODO el
+                 # proyecto (una por línea; postgres y redis primero, como en el real). Salen del
+                 # compose que arma la prueba (FAKE_COMPOSE_JSON); sin él, postgres, redis y el motor de FAKE_ENGINE_REF.
+                 *"--images"*)
+                   if [ -n "${FAKE_COMPOSE_JSON:-}" ]; then
+                     python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["services"]; [print(s[n]["image"]) for n in sorted(s,key=lambda n:(n not in ("db","redis"),n)) if s[n].get("image")]' "$FAKE_COMPOSE_JSON"
+                   else
+                     echo "postgres:16-alpine"; echo "redis:7-alpine"; echo "${FAKE_ENGINE_REF:-ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa}"
+                   fi ;;
                  *) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa" ;;
                esac ;;
       pull)    exit "${FAKE_PULL_RC:-0}" ;;
@@ -41,7 +50,13 @@ case "${1:-}" in
       *'{{.Image}}'*)  echo "sha256:0123" ;;
     esac
     exit 0 ;;
-  image) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:viejo"; exit 0 ;;
+  # `image inspect <ref>`: FAKE_IMAGES_MISSING lista fragmentos de referencia que NO están en local (coincidencia
+  # parcial). Sin la variable, todo está.
+  image)
+    if [ "${2:-}" = inspect ] && [ -n "${FAKE_IMAGES_MISSING:-}" ]; then
+      for f in $FAKE_IMAGES_MISSING; do case "$*" in *"$f"*) exit 1 ;; esac; done
+    fi
+    echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:viejo"; exit 0 ;;
   ps)    for c in $FAKE_CLIENTS; do echo "$c"; done; exit 0 ;;
   logs)  echo "${FAKE_ENGINE_LOG:-Application startup complete}"; exit 0 ;;
   start|stop) exit 0 ;;
@@ -55,6 +70,25 @@ while [ $# -gt 0 ]; do case "$1" in -i) shift ;; -e) shift 2 ;; *) break ;; esac
 cont="$1"; shift
 cmd="$1"; shift
 case "$cmd" in
+  # curl DENTRO de AnythingLLM (install.sh: allm_curl). FAKE_ALLM_ARRANCANDO=N: las primeras N llamadas fallan con 7
+  # (conexión rechazada: el contenedor está pero la aplicación todavía no escucha); FAKE_ALLM_APAGADO=1: siempre 7.
+  curl)
+    echo "curl $*" >> "${FAKE_LOG}.allm"
+    [ "${FAKE_ALLM_APAGADO:-}" != 1 ] || exit 7
+    if [ -n "${FAKE_ALLM_ARRANCANDO:-}" ]; then
+      n=$(cat "${FAKE_LOG}.allm-n" 2>/dev/null || echo 0)
+      echo $((n + 1)) > "${FAKE_LOG}.allm-n"
+      [ "$n" -ge "$FAKE_ALLM_ARRANCANDO" ] || exit 7
+    fi
+    resp_ok='{"error":false}'
+    case "$*" in *update-env*) echo "${FAKE_ALLM_RESP:-$resp_ok}" ;; esac
+    exit 0 ;;
+  # sha256sum DENTRO del proxy (install.sh: proxy_config_vieja): lo que «ve» el contenedor montado es el directorio
+  # FAKE_PROXY_MONTADO (la copia que quedó atada al inodo viejo); FAKE_PROXY_SIN_CONTENEDOR=1: el contenedor no está.
+  sha256sum)
+    [ "${FAKE_PROXY_SIN_CONTENEDOR:-}" != 1 ] || { echo "Error response from daemon: No such container: $cont" >&2; exit 1; }
+    for f in "$@"; do (cd "${FAKE_PROXY_MONTADO:?}" && sha256sum "$(basename "$f")" | sed "s| .*| $f|"); done
+    exit 0 ;;
   pg_dump)    echo "PGDMP-falso"; exit 0 ;;
   pg_restore) cat >/dev/null; echo "1; 1259 1 TABLE public users elea_admin"; exit 0 ;;
   sh)         exit "${FAKE_DUMP_RC:-0}" ;;

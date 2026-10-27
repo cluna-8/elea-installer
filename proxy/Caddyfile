@@ -34,12 +34,20 @@
 
 # El enrutamiento, una sola vez para los dos puertos.
 (ruta) {
+	# Que ninguna respuesta (ni la del backend ni el 404 de acá) diga con qué software está hecha: sin
+	# `Server` (ni el de Caddy ni el del servidor del backend) ni `X-Powered-By`. Los `header_down` de
+	# abajo repiten lo mismo para lo que viene del backend, que es lo que Caddy copia al final.
+	header -Server
+	header -X-Powered-By
+
 	@interno path_regexp "(?i)(^|/)internal(/|$)"
 	respond @interno 404
 
 	# flush_interval -1: las respuestas del gateway llegan por trozos (streaming); no se retienen.
 	reverse_proxy backend:8000 {
 		flush_interval -1
+		header_down -Server
+		header_down -X-Powered-By
 	}
 }
 

@@ -38,7 +38,7 @@ nuevo_entorno() {
   export HOME="$T/home"; unset XDG_CONFIG_HOME ELEA_REDIRECT_ENV_FILE ELEA_SIN_RESPALDO
   export FAKE_LOG="$T/docker.log"; : > "$FAKE_LOG"; export FAKE_CURL=1
   export PATH="$AQUI/tests/fake-docker:$PATH_ORIG"
-  unset FAKE_HTTP_INTERNAL FAKE_HTTP_REDIRECT FAKE_HTTP_HEALTH FAKE_SEED_MISSING FAKE_CATALOG_RC FAKE_PULL_RC RESPALDO_RC
+  unset FAKE_HTTP_INTERNAL FAKE_HTTP_REDIRECT FAKE_HTTP_HEALTH FAKE_SEED_MISSING FAKE_CATALOG_RC FAKE_PULL_RC FAKE_IMAGES_MISSING RESPALDO_RC
   export ELEA_EXT_MIN_VERSION="$MINIMA" ELEA_ESPERA_INTENTOS=2 ELEA_ESPERA_PAUSA=0
   # La salida de `docker compose config --format json` con la extensión: el compose real fusionado.
   COMPOSE_OK="$T/compose-ok.json"
@@ -350,8 +350,8 @@ done
 nuevo_entorno; export FAKE_COMPOSE_JSON=/nonexistent
 activar "${ACTIVA[@]}"
 verifica_sin_activar "si docker compose no entrega la configuración"
-# imágenes -ext que no existen: no se activa nada
-nuevo_entorno; export FAKE_PULL_RC=1
+# imágenes -ext que no se pueden bajar y tampoco están en local: no se activa nada (con ellas en local sigue: tests/test-pull-local.sh)
+nuevo_entorno; export FAKE_PULL_RC=1 FAKE_IMAGES_MISSING=-ext
 activar "${ACTIVA[@]}"
 verifica_sin_activar "si no se pueden bajar las imágenes -ext"
 chequear "sin imágenes: el mensaje nombra la versión" grep -q "$VERSION" <<<"$out"
