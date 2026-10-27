@@ -33,7 +33,7 @@ nuevo_entorno() {
   export HOME="$T/home"; unset XDG_CONFIG_HOME ELEA_REDIRECT_ENV_FILE ELEA_SIN_RESPALDO
   export FAKE_LOG="$T/docker.log"; : > "$FAKE_LOG"; export FAKE_CURL=1
   export PATH="$AQUI/tests/fake-docker:$PATH_ORIG"
-  unset FAKE_HTTP_INTERNAL FAKE_HTTP_REDIRECT FAKE_HTTP_HEALTH FAKE_SEED_MISSING FAKE_CATALOG_RC FAKE_PULL_RC FAKE_IMAGES_MISSING FAKE_ENGINE_REF
+  unset FAKE_HTTP_INTERNAL FAKE_HTTP_REDIRECT FAKE_HTTP_HEALTH FAKE_SEED_MISSING FAKE_CATALOG_RC FAKE_PULL_RC FAKE_IMAGES_MISSING ENGINE_IMAGE
   export ELEA_EXT_MIN_VERSION="$MINIMA" ELEA_ESPERA_INTENTOS=2 ELEA_ESPERA_PAUSA=0
   COMPOSE_OK="$T/compose-ok.json"
   ELEA_EXT_VERSION=$VERSION python3 "$RENDER" --redirect > "$COMPOSE_OK"
@@ -101,18 +101,22 @@ bloque() {
 chequear "el bloque del pull del motor está en install.sh" bash -c '[ "$(echo "$1" | wc -l)" -gt 3 ]' _ "$(bloque)"
 motor() { # entorno extra …  → corre el bloque con el docker de mentira; deja $out y $rc
   nuevo_entorno; export FAKE_PULL_RC=1
+  env ELEA_EXT_VERSION=$VERSION "$@" python3 "$RENDER" > "$COMPOSE_OK"   # compose efectivo con el ENGINE_IMAGE de la prueba
   { printf 'set -euo pipefail\nlog() { echo "▶ $1"; }\ndie() { echo "✗ $1" >&2; exit 1; }\n'; bloque; echo "echo SIGUE"; } > "$T/bloque.sh"
   out=$(env "$@" bash "$T/bloque.sh" </dev/null 2>&1); rc=$?
 }
 motor FAKE_X=1
 chequear "imagen del motor presente en local: sigue sin pedir credenciales" bash -c '[ "$2" = 0 ] && grep -q SIGUE <<<"$1" && ! grep -q "Pedí un token" <<<"$1"' _ "$out" "$rc"
 chequear "imagen presente: no llama a docker login" bash -c '! grep -q "docker login" "$1"' _ "$FAKE_LOG"
-chequear "imagen presente: consulta la imagen del motor de compose" grep -q "compose config --images engine" "$FAKE_LOG"
+chequear "imagen presente: lee la imagen del motor de la config efectiva" grep -q "compose config --format json" "$FAKE_LOG"
 motor FAKE_IMAGES_MISSING=elea-guardian-engine
 chequear "imagen del motor ausente: pide usuario y token (como siempre)" grep -q "Pedí un token" <<<"$out"
-motor FAKE_IMAGES_MISSING=elea-engine:local FAKE_ENGINE_REF=elea-engine:local
+motor FAKE_IMAGES_MISSING=elea-guardian-engine
+chequear "comprueba la imagen del motor, no la primera del proyecto (redis/postgres)" bash -c '! grep -E "image inspect (redis|postgres)" "$1"' _ "$FAKE_LOG"
+chequear "no anuncia redis/postgres como imagen del motor" bash -c '! grep -Eq "máquina: (redis|postgres)" <<<"$1"' _ "$out"
+motor FAKE_IMAGES_MISSING=elea-engine:local ENGINE_IMAGE=elea-engine:local
 chequear "motor local ausente (ENGINE_IMAGE local): pide credenciales" grep -q "Pedí un token" <<<"$out"
-motor FAKE_ENGINE_REF=elea-engine:local
+motor ENGINE_IMAGE=elea-engine:local
 chequear "motor local presente (ENGINE_IMAGE local): no pide credenciales" bash -c '[ "$2" = 0 ] && ! grep -q "Pedí un token" <<<"$1"' _ "$out" "$rc"
 nuevo_entorno   # pull que anda: ni inspecciona ni pide nada
 { printf 'set -euo pipefail\nlog() { :; }\ndie() { exit 1; }\n'; bloque; echo "echo SIGUE"; } > "$T/bloque.sh"

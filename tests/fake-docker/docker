@@ -11,8 +11,15 @@ case "${1:-}" in
       # `config --format json` devuelve el archivo $FAKE_COMPOSE_JSON (lo arma la prueba con tests/render-compose.py).
       config)  case "$*" in
                  *"--format json"*) [ -z "${FAKE_COMPOSE_JSON:-}" ] || cat "$FAKE_COMPOSE_JSON" ;;
-                 # `config --images engine`: la imagen del motor según la prueba (FAKE_ENGINE_REF).
-                 *"--images engine"*) echo "${FAKE_ENGINE_REF:-ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa}" ;;
+                 # `config --images [servicio]`: como el docker real, IGNORA el servicio y devuelve las imágenes de TODO el
+                 # proyecto (una por línea; postgres y redis primero, como en el real). Salen del
+                 # compose que arma la prueba (FAKE_COMPOSE_JSON); sin él, postgres, redis y el motor de FAKE_ENGINE_REF.
+                 *"--images"*)
+                   if [ -n "${FAKE_COMPOSE_JSON:-}" ]; then
+                     python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["services"]; [print(s[n]["image"]) for n in sorted(s,key=lambda n:(n not in ("db","redis"),n)) if s[n].get("image")]' "$FAKE_COMPOSE_JSON"
+                   else
+                     echo "postgres:16-alpine"; echo "redis:7-alpine"; echo "${FAKE_ENGINE_REF:-ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa}"
+                   fi ;;
                  *) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa" ;;
                esac ;;
       pull)    exit "${FAKE_PULL_RC:-0}" ;;

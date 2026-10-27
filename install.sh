@@ -83,7 +83,13 @@ fi
 if ! docker compose pull --quiet engine >/dev/null 2>&1; then
   # Una imagen del motor que ya está en esta máquina (construida en local, README «Probar imágenes construidas en
   # local», o bajada antes) no necesita registro: no se pide login.
-  eng_ref=$(docker compose config --images engine 2>/dev/null | head -n1 || true)
+  # La imagen sale de la config efectiva (como activar-redirect.sh): `config --images engine` devuelve las de TODO el proyecto.
+  eng_ref=$(docker compose config --format json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("services", {}).get("engine", {}).get("image", ""))
+except ValueError:
+    pass' || true)
   if [ -n "$eng_ref" ] && docker image inspect "$eng_ref" >/dev/null 2>&1; then
     echo "  ! No se pudo descargar la imagen del motor; se usa la que ya está en esta máquina: $eng_ref" >&2
   else
