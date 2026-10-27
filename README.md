@@ -4,6 +4,12 @@ Paquete de instalación: Guardian (gobernanza IA) + cliente RAG + AnythingLLM, t
 un solo `docker compose`. Las imágenes ya están construidas — este repo no tiene el
 código fuente del Guardian, solo la configuración para levantarlo.
 
+## Requisitos
+
+Docker con `docker compose`. Memoria: el analizador de datos personales corre `NLP_WORKERS` procesos y cada uno
+ocupa ≈ 360 MB. Por defecto son 2 (≈ 0,7 GB); en servidores con memoria de sobra se puede subir a 4 (≈ 1,4 GB)
+poniendo `NLP_WORKERS=4` en `.env`. Una imagen del analizador anterior a este cambio ignora la variable.
+
 ## Instalación
 
 ```bash
@@ -72,6 +78,13 @@ distribuible sale de `backend/Dockerfile.standalone`; el script fija eso y lo ve
 subir. Por cada imagen imprime una línea `PINNED <nombre>=<imagen>@sha256:…`: esa es la referencia
 que se pega para fijar una versión (el motor, ver más abajo). Después de publicar, probar este instalador desde cero (carpeta nueva, `docker compose
 down -v` si había algo) antes de sincronizarlo a Azure DevOps.
+
+## Probar imágenes construidas en local
+
+Para probar imágenes que no están publicadas (construidas en la máquina), se cargan en el `.env` **antes** de
+correr `./install.sh`: `BACKEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE` y `FRONTEND_EXT_IMAGE` (las variantes `-ext`, solo
+con `ELEA_REDIRECT=1`) y `NLP_IMAGE` (el analizador). Cada una reemplaza la imagen entera por la referencia que se
+ponga; todas están, comentadas, en `.env.example`. Sacarlas del `.env` devuelve las imágenes publicadas.
 
 ## Después de instalar
 
@@ -1410,6 +1423,7 @@ no hace falta intervenir.
 
 ```bash
 bash tests/test-embeddings-deployment.sh   # despliegue de embeddings del ruteo: compose (base y -ext), .env.example y README (sin Docker)
+bash tests/test-nlp-workers.sh            # analizador: NLP_WORKERS=2 por defecto, NLP_IMAGE y documentación (sin Docker)
 bash tests/test-base-motor.sh    # separar la base del motor, vuelta atrás B, volver a separar, respaldo (Docker simulado)
 bash tests/test-super-admin.sh   # usuario de cumplimiento: ./crear-super-admin.sh y su cableado en install.sh (Docker simulado)
 bash tests/test-proxy.sh         # cableado del proxy en el compose e install.sh; con un binario `caddy`, el proxy de verdad
