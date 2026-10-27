@@ -11,6 +11,8 @@ case "${1:-}" in
       # `config --format json` devuelve el archivo $FAKE_COMPOSE_JSON (lo arma la prueba con tests/render-compose.py).
       config)  case "$*" in
                  *"--format json"*) [ -z "${FAKE_COMPOSE_JSON:-}" ] || cat "$FAKE_COMPOSE_JSON" ;;
+                 # `config --images engine`: la imagen del motor según la prueba (FAKE_ENGINE_REF).
+                 *"--images engine"*) echo "${FAKE_ENGINE_REF:-ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa}" ;;
                  *) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:aaaa" ;;
                esac ;;
       pull)    exit "${FAKE_PULL_RC:-0}" ;;
@@ -41,7 +43,13 @@ case "${1:-}" in
       *'{{.Image}}'*)  echo "sha256:0123" ;;
     esac
     exit 0 ;;
-  image) echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:viejo"; exit 0 ;;
+  # `image inspect <ref>`: FAKE_IMAGES_MISSING lista fragmentos de referencia que NO están en local (coincidencia
+  # parcial). Sin la variable, todo está.
+  image)
+    if [ "${2:-}" = inspect ] && [ -n "${FAKE_IMAGES_MISSING:-}" ]; then
+      for f in $FAKE_IMAGES_MISSING; do case "$*" in *"$f"*) exit 1 ;; esac; done
+    fi
+    echo "ghcr.io/cluna-8/elea-guardian-engine@sha256:viejo"; exit 0 ;;
   ps)    for c in $FAKE_CLIENTS; do echo "$c"; done; exit 0 ;;
   logs)  echo "${FAKE_ENGINE_LOG:-Application startup complete}"; exit 0 ;;
   start|stop) exit 0 ;;

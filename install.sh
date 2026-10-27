@@ -81,11 +81,18 @@ if [ -n "${ENGINE_IMAGE:-}" ] && [ "${ENGINE_IMAGE#*@sha256:}" = "${ENGINE_IMAGE
   echo "  ! ENGINE_IMAGE (.env) no es un digest (…@sha256:…): el motor puede cambiar de versión sin aviso." >&2
 fi
 if ! docker compose pull --quiet engine >/dev/null 2>&1; then
-  log "No se pudo descargar la imagen del Guardian sin credenciales — login al registro"
-  echo "Pedí un token de lectura (read:packages) a quien te dio este instalador."
-  read -rp "Usuario de GitHub: " GHCR_USER
-  read -rsp "Token: " GHCR_TOKEN; echo
-  echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || die "No se pudo autenticar al registro."
+  # Una imagen del motor que ya está en esta máquina (construida en local, README «Probar imágenes construidas en
+  # local», o bajada antes) no necesita registro: no se pide login.
+  eng_ref=$(docker compose config --images engine 2>/dev/null | head -n1 || true)
+  if [ -n "$eng_ref" ] && docker image inspect "$eng_ref" >/dev/null 2>&1; then
+    echo "  ! No se pudo descargar la imagen del motor; se usa la que ya está en esta máquina: $eng_ref" >&2
+  else
+    log "No se pudo descargar la imagen del Guardian sin credenciales — login al registro"
+    echo "Pedí un token de lectura (read:packages) a quien te dio este instalador."
+    read -rp "Usuario de GitHub: " GHCR_USER
+    read -rsp "Token: " GHCR_TOKEN; echo
+    echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || die "No se pudo autenticar al registro."
+  fi
 fi
 
 # ── 2b. Base propia del motor ───────────────────────────────────────────────────────

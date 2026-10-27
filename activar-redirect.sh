@@ -134,7 +134,21 @@ if s.get("backend", {}).get("ports"):
   [ "$cod" = 404 ] || die "/api/v1/internal/identity dio ${cod:-sin respuesta} por el puerto publicado (se esperaba 404): el plano interno no está cerrado, o el Guardian no está levantado. No se activa la extensión."
 
   log "Bajando las imágenes -ext (${ELEA_EXT_VERSION})"
-  docker compose pull backend frontend engine || die "No se pudieron bajar las imágenes -ext de la versión ${ELEA_EXT_VERSION} (¿se publicaron? ¿ELEA_EXT_VERSION correcta?). No se activa nada."
+  # Si el pull falla, no alcanza para morir: las imágenes pueden estar construidas en esta máquina (BACKEND_EXT_IMAGE,
+  # FRONTEND_EXT_IMAGE, ENGINE_EXT_IMAGE: README, «Probar imágenes construidas en local»). Se muere solo si falta alguna.
+  if ! docker compose pull backend frontend engine; then
+    local faltan="" img
+    while IFS= read -r img; do
+      docker image inspect "$img" >/dev/null 2>&1 || faltan="${faltan:+$faltan, }$img"
+    done < <(printf '%s' "$cfg" | python3 -c '
+import json, sys
+s = json.load(sys.stdin).get("services", {})
+for n in ("backend", "frontend", "engine"):
+    if s.get(n, {}).get("image"):
+        print(s[n]["image"])')
+    [ -z "$faltan" ] || die "No se pudieron bajar las imágenes -ext de la versión ${ELEA_EXT_VERSION} (¿se publicaron? ¿ELEA_EXT_VERSION correcta?) y no están en esta máquina: ${faltan}. No se activa nada."
+    aviso "No se pudieron bajar las imágenes -ext de ${ELEA_EXT_VERSION}: se usan las imágenes locales (están en esta máquina)."
+  fi
 
   # Respaldo ANTES de aplicar las migraciones de la extensión: volver a las imágenes base solo se puede con él.
   if [ "${ELEA_REDIRECT_ACTIVADA:-}" != 1 ]; then

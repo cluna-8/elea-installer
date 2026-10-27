@@ -86,6 +86,12 @@ correr `./install.sh`: `BACKEND_EXT_IMAGE`, `ENGINE_EXT_IMAGE` y `FRONTEND_EXT_I
 con `ELEA_REDIRECT=1`) y `NLP_IMAGE` (el analizador). Cada una reemplaza la imagen entera por la referencia que se
 ponga; todas están, comentadas, en `.env.example`. Sacarlas del `.env` devuelve las imágenes publicadas.
 
+Si la imagen existe solo en esta máquina, el instalador no la baja del registro: `./install.sh` y
+`./activar-redirect.sh` intentan el `pull`, y si falla pero la imagen está en local (la comprueban con
+`docker image inspect`), siguen con ella —avisan cuál— y no piden usuario ni token del registro. Si falta alguna
+de las imágenes de backend, panel o motor, paran antes de tocar nada y dicen cuál. Con imágenes publicadas el
+comportamiento no cambia. Prueba sin Docker: `bash tests/test-pull-local.sh`.
+
 ## Después de instalar
 
 0. **Guardar la contraseña del usuario de cumplimiento** que mostró `./install.sh` (se muestra una sola vez,
